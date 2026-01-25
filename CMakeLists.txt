@@ -1,0 +1,36 @@
+cmake_minimum_required(VERSION 3.18)
+project(inference_engine LANGUAGES CXX CUDA)
+
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CUDA_STANDARD 17)
+
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+
+set(CMAKE_CUDA_ARCHITECTURES 61)
+
+
+include_directories(${CMAKE_SOURCE_DIR}/include)
+
+set(CUDA_SOURCES
+    src/kernels/gemm.cu
+)
+
+set(CPP_SOURCES
+    src/memory.cpp
+)
+
+
+
+add_executable(test_gemm
+    tests/test_gemm.cu
+    ${CUDA_SOURCES}
+    ${CPP_SOURCES}
+)
+
+target_link_libraries(test_gemm PRIVATE cuda)
+
+message(STATUS "Configured for GTX 1050 Ti (Compute Capability 6.1)")
