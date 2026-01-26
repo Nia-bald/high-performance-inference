@@ -12,6 +12,15 @@ namespace kernels {
         cudaStream_t stream = 0//which cuda stream to perform this operation in
     );
 
+    void launch_layer_norm(
+        const float* input, // [Batch size, seq_len, hidden_dim] (would be heap allocated as it could be huge)
+        float* output, // [Batch size, seq_len, hidden_dim] (would be heap allocated as it could be huge)
+        const float* gamma, // [Batch size, seq_len, hidden dim] (would be heap allocated as it could be huge) not returning a output as we would want to write straight to memory which has already been allocated 
+        const float* beta, // [Batch size, seq_len, hidden dim] (would be heap allocated as it could be huge) not returning a output as we would want to write straight to memory which has already been allocated 
+        int batch_size, int seq_len, int hidden_dim,
+        cudaStream_t stream = 0//which cuda stream to perform this operation in
+    );
+
     // simple matrix multiplication 
     // we want to perform C = (A X B) + C
     void launch_gemm_tiled(
