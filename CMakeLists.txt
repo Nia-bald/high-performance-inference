@@ -17,6 +17,7 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 
 set(CUDA_SOURCES
     src/kernels/gemm.cu
+    src/kernels/embedding.cu
 )
 
 set(CPP_SOURCES
@@ -24,7 +25,7 @@ set(CPP_SOURCES
 )
 
 
-
+add_executable(test_embedding tests/test_embedding.cu src/memory.cpp src/kernels/embedding.cu)
 add_executable(test_gemm
     tests/test_gemm.cu
     ${CUDA_SOURCES}
@@ -32,5 +33,6 @@ add_executable(test_gemm
 )
 
 target_link_libraries(test_gemm PRIVATE cuda)
+target_link_libraries(test_embedding PRIVATE cuda)
 
 message(STATUS "Configured for GTX 1050 Ti (Compute Capability 6.1)")
