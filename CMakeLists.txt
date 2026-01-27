@@ -19,6 +19,8 @@ set(CUDA_SOURCES
     src/kernels/gemm.cu
     src/kernels/embedding.cu
     src/kernels/layernorm.cu
+    src/kernels/softmax.cu
+
 )
 
 set(CPP_SOURCES
@@ -27,6 +29,12 @@ set(CPP_SOURCES
 
 
 add_executable(test_embedding tests/test_embedding.cu src/memory.cpp src/kernels/embedding.cu)
+
+add_executable(test_softmax
+    tests/test_softmax.cu
+    ${CUDA_SOURCES}
+    ${CPP_SOURCES}
+)
 
 add_executable(test_layernorm
     tests/test_layernorm.cu
@@ -43,6 +51,8 @@ add_executable(test_gemm
 target_link_libraries(test_gemm PRIVATE cuda)
 target_link_libraries(test_embedding PRIVATE cuda)
 target_link_libraries(test_layernorm PRIVATE cuda)
+target_link_libraries(test_softmax PRIVATE cuda)
+
 
 
 message(STATUS "Configured for GTX 1050 Ti (Compute Capability 6.1)")

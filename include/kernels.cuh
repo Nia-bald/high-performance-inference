@@ -21,6 +21,12 @@ namespace kernels {
         cudaStream_t stream = 0//which cuda stream to perform this operation in
     );
 
+    void launch_softmax(
+        float* input,
+        int rows, int cols,
+        cudaStream_t stream = 0
+    );
+
     // simple matrix multiplication 
     // we want to perform C = (A X B) + C
     void launch_gemm_tiled(
