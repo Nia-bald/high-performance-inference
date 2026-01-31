@@ -27,6 +27,12 @@ namespace kernels {
         cudaStream_t stream = 0
     );
 
+    void launch_transpose(
+        const float* input, float* output,
+        int rows, int cols, // rows and cols of the input
+        cudaStream_t stream = 0
+    );
+
     // simple matrix multiplication 
     // we want to perform C = (A X B) + C
     void launch_gemm_tiled(

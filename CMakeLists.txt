@@ -20,6 +20,7 @@ set(CUDA_SOURCES
     src/kernels/embedding.cu
     src/kernels/layernorm.cu
     src/kernels/softmax.cu
+    src/kernels/transpose.cu
 
 )
 
@@ -48,10 +49,18 @@ add_executable(test_gemm
     ${CPP_SOURCES}
 )
 
+add_executable(test_transpose
+    tests/test_transpose.cu
+    ${CUDA_SOURCES}
+    ${CPP_SOURCES}
+)
+
 target_link_libraries(test_gemm PRIVATE cuda)
 target_link_libraries(test_embedding PRIVATE cuda)
 target_link_libraries(test_layernorm PRIVATE cuda)
 target_link_libraries(test_softmax PRIVATE cuda)
+target_link_libraries(test_transpose PRIVATE cuda)
+
 
 
 
