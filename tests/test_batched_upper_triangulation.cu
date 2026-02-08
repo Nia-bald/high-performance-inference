@@ -36,11 +36,11 @@ int main() {
 
     const float NEG_INF = -std::numeric_limits<float>::infinity();
     std::vector<float> h_expected = {
-            1.0f,  2.0f,  3.0f,  4.0f,
-            NEG_INF,  6.0f,  NEG_INF,  8.0f,
-            9.0f,  10.0f, 11.0f, 12.0f,
-            NEG_INF, 14.0f, NEG_INF, 16.0f
-        };
+        1.0f,  NEG_INF,  3.0f,  NEG_INF,
+        5.0f,  6.0f,  7.0f,  8.0f,
+        9.0f,  NEG_INF, 11.0f, NEG_INF,
+        13.0f, 14.0f, 15.0f, 16.0f
+    };
 
     std::vector<float> h_output(ROWS * COLS);
 

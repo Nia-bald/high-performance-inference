@@ -15,7 +15,7 @@ namespace kernels {
         if (row < rows && col < cols){
             int LHS = row + (col/stride_col) * stride_col;
             int RHS = col + (row/stride_row) * stride_row;
-            bool condition = LHS > RHS;
+            bool condition = LHS < RHS;
             if (condition){
                 data[row*cols + col] = NEG_INF;
             }
