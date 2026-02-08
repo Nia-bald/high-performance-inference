@@ -43,4 +43,12 @@ namespace kernels {
         cudaStream_t stream = 0
     );
 
+    void launch_batched_gemm(
+        const float* A,  // [M, K]
+        const float* B,  // [K, N]
+        float* C, // [M, N]
+        int M, int N, int K,
+        int stride_A, int stride_B, int stride_K,
+        cudaStream_t stream = 0
+    );
 }
