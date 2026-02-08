@@ -51,4 +51,13 @@ namespace kernels {
         int stride_A, int stride_B, int stride_K,
         cudaStream_t stream = 0
     );
+
+    void launch_batch_upper_triangulate(
+        float* data,
+        int rows,
+        int cols,
+        int stride_row,
+        int stride_col,
+        cudaStream_t stream = 0
+    );
 }

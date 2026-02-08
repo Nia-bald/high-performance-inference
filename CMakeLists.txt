@@ -22,6 +22,7 @@ set(CUDA_SOURCES
     src/kernels/softmax.cu
     src/kernels/transpose.cu
     src/kernels/batched_gemm.cu
+    src/kernels/batched_upper_triangulation.cu
 )
 
 set(CPP_SOURCES
@@ -62,6 +63,12 @@ add_executable(test_batched_gemm
     ${CPP_SOURCES}
 )
 
+add_executable(test_batched_upper_triangulation
+    tests/test_batched_upper_triangulation.cu
+    ${CUDA_SOURCES}
+    ${CPP_SOURCES}
+)
+
 
 target_link_libraries(test_gemm PRIVATE cuda)
 target_link_libraries(test_embedding PRIVATE cuda)
@@ -69,6 +76,7 @@ target_link_libraries(test_layernorm PRIVATE cuda)
 target_link_libraries(test_softmax PRIVATE cuda)
 target_link_libraries(test_transpose PRIVATE cuda)
 target_link_libraries(test_batched_gemm PRIVATE cuda)
+target_link_libraries(test_batched_upper_triangulation PRIVATE cuda)
 
 
 
