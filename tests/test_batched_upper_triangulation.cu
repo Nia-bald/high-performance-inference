@@ -50,10 +50,26 @@ int main() {
     // Copy input to GPU
     CUDA_CHECK(cudaMemcpy(d_data, h_input.data(), h_input.size() * sizeof(float), cudaMemcpyHostToDevice));
 
-    // Launch kernel
+    // Create CUDA events for timing
+    cudaEvent_t start, stop;
+    CUDA_CHECK(cudaEventCreate(&start));
+    CUDA_CHECK(cudaEventCreate(&stop));
+
+    // Launch kernel with timing
     std::cout << "Launching Batch Upper Triangulation (4x4, stride_row=2, stride_col=2)..." << std::endl;
+    CUDA_CHECK(cudaEventRecord(start));
     kernels::launch_batch_upper_triangulate(d_data, ROWS, COLS, STRIDE_ROW, STRIDE_COL, 0);
-    CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(cudaEventRecord(stop));
+    CUDA_CHECK(cudaEventSynchronize(stop));
+
+    // Calculate and log execution time
+    float milliseconds = 0;
+    CUDA_CHECK(cudaEventElapsedTime(&milliseconds, start, stop));
+    std::cout << ">>> Execution time: " << milliseconds << " ms" << std::endl;
+
+    // Clean up events
+    CUDA_CHECK(cudaEventDestroy(start));
+    CUDA_CHECK(cudaEventDestroy(stop));
 
     // Copy results back
     CUDA_CHECK(cudaMemcpy(h_output.data(), d_data, h_output.size() * sizeof(float), cudaMemcpyDeviceToHost));
