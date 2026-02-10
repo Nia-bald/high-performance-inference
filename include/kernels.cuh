@@ -60,4 +60,12 @@ namespace kernels {
         int stride_col,
         cudaStream_t stream = 0
     );
+    void launch_batched_one_to_one_gemm(
+        const float* A,  // [M, K]
+        const float* B,  // [K, N]
+        float* C, // [M, N]
+        int M, int N, int K,
+        int stride_A, int stride_B, int stride_K,
+        cudaStream_t stream = 0
+    );
 }
