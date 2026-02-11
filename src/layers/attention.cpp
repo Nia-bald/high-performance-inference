@@ -53,10 +53,13 @@ void SelfAttention::forward(const float* d_input, float* d_output,
     // cudaDeviceSynchronize();
 
     float* d_K = inference_arena.allocate<float>(qk_proj_size);
-    kernels::launch_gemm_tiled(d_input, this->W_K, d_K, this->batch_size*this->seq_len, this->total_qk_dim, this->d_model, stream);
+    kernels::launch_gemm_tiled(d_input, this->W_k, d_K, this->batch_size*this->seq_len, this->total_qk_dim, this->d_model, stream);
 
     float* d_K_transpose = inference_arena.allocate<float>(qk_proj_size);
     kernels::launch_transpose(d_K, d_K_transpose, this->batch_size*this->seq_len, this->total_qk_dim, stream);
+
+    float* d_V = inference_arena.allocate<float>(qk_proj_size);
+    kernels::launch_gemm_tiled(d_input, this->W_v, d_V, this->batch_size*this->seq_len, this->total_qk_dim, this->d_model, stream);
 
     float* d_attention = inference_arena.allocate<float>(attention_size);
 
@@ -85,6 +88,19 @@ void SelfAttention::forward(const float* d_input, float* d_output,
         this->num_heads*this->batch_size*this->seq_len,
         this->seq_len,
         stream);
+    
+    float* d_A_mult_V = inference_arena.allocate<float>(this->total_qk_dim * this->seq_len * this->batch_size);
 
+    kernels::launch_batched_one_to_one_gemm(
+        d_attention, 
+        d_V, 
+        d_A_mult_V, 
+        this->batch_size*this->seq_len, 
+        this->total_qk_dim, 
+        this->batch_size*this->seq_len,
+        this->seq_len,
+        this->head_dim_qk,
+        this->seq_len
+        stream);
 
 }
