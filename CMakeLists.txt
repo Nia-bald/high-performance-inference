@@ -24,6 +24,7 @@ set(CUDA_SOURCES
     src/kernels/batched_gemm.cu
     src/kernels/batched_upper_triangulation.cu
     src/kernels/batched_one_to_one_gemm.cu
+    src/kernels/addition.cu
 )
 
 set(CPP_SOURCES
@@ -76,6 +77,12 @@ add_executable(test_batched_one_to_one_gemm
     ${CPP_SOURCES}
 )
 
+add_executable(test_addition
+    tests/test_addition.cu
+    ${CUDA_SOURCES}
+    ${CPP_SOURCES}
+)
+
 
 target_link_libraries(test_gemm PRIVATE cuda)
 target_link_libraries(test_embedding PRIVATE cuda)
@@ -85,6 +92,7 @@ target_link_libraries(test_transpose PRIVATE cuda)
 target_link_libraries(test_batched_gemm PRIVATE cuda)
 target_link_libraries(test_batched_upper_triangulation PRIVATE cuda)
 target_link_libraries(test_batched_one_to_one_gemm PRIVATE cuda)
+target_link_libraries(test_addition PRIVATE cuda)
 
 
 

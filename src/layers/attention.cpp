@@ -63,7 +63,7 @@ void SelfAttention::forward(const float* d_input, float* d_output,
 
     float* d_attention = inference_arena.allocate<float>(attention_size);
 
-    kernels::launch_batched_gemm(
+    kernels::launch_batched_gemm(  // transposed matrix batches matrix mult
         d_Q, 
         d_K_transpose, 
         d_attention, 
@@ -103,4 +103,13 @@ void SelfAttention::forward(const float* d_input, float* d_output,
         this->seq_len
         stream);
 
+    kernels::launch_gemm_tiled(
+        d_A_mult_V,
+        d_W_o,
+        d_output,
+        this->batch_size*this->seq_len,
+        this->total_qk_dim,
+        this->total_qk_dim,
+        stream
+    );
 }

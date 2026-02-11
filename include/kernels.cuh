@@ -68,4 +68,11 @@ namespace kernels {
         int stride_A, int stride_B, int stride_K,
         cudaStream_t stream = 0
     );
+    void launch_addition(
+        const float* A,  
+        const float* B,  
+        float* C,  
+        const int length,
+        cudaStream_t stream = 0
+    );
 }
