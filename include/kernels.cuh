@@ -75,4 +75,16 @@ namespace kernels {
         const int length,
         cudaStream_t stream = 0
     );
+
+    void launch_bias_gelu(float* data,
+        const float* bias,
+        int rows,
+        int cols,
+        cudaStream_t stream);
+
+    void launch_bias_add(float* data,
+        const float* bias,
+        int rows,
+        int cols,
+        cudaStream_t stream);
 }
