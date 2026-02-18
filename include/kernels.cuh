@@ -5,12 +5,14 @@
 namespace kernels {
 
     void launch_embedding_lookup(
-        const int* token_ids, // [Batch size, seq_len] (would be heap allocated as it could be huge)
-        const float* table, // [Vocab size, Hidden dim] (would be heap allocated as it could be huge)
-        float* output, // [Batch size, seq_len, hidden dim] (would be heap allocated as it could be huge) not returning a output as we would want to write straight to memory which has already been allocated 
-        int batch_size, int seq_len, int hidden_dim, // can be stack allocated as these are just dimensions (not big)
-        cudaStream_t stream = 0//which cuda stream to perform this operation in
-    );
+        const int* token_ids, 
+        const float* token_table, 
+        const float* pos_table, 
+        float* output, 
+        int batch_size, 
+        int current_seq_len, // Passed from forward()
+        int d_model, 
+        cudaStream_t stream = 0);
 
     void launch_layer_norm(
         const float* input, // [Batch size, seq_len, hidden_dim] (would be heap allocated as it could be huge)
