@@ -82,11 +82,22 @@ namespace kernels {
         const float* bias,
         int rows,
         int cols,
-        cudaStream_t stream);
+        cudaStream_t stream = 0);
 
     void launch_bias_add(float* data,
         const float* bias,
         int rows,
         int cols,
-        cudaStream_t stream);
+        cudaStream_t stream = 0);
+            // ... existing kernels ...
+        
+    // Greedy Sampling (Argmax)
+    void launch_argmax(
+        const float* logits, 
+        int* output_ids, 
+        int batch_size, 
+        int seq_len, 
+        int vocab_size, 
+        cudaStream_t stream = 0
+    );
 }
