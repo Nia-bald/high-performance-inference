@@ -60,11 +60,11 @@ private:
 //   2. Output     = Residual_1 + FFN(LayerNorm(Residual_1))
 class TransformerBlock {
 public:
-    TransformerBlock(int batch_size, int seq_len, int d_model, int num_heads, int d_ff, 
+    TransformerBlock(int seq_len, int d_model, int num_heads, int d_ff, 
                      GPUMemoryArena& weights_arena);
     ~TransformerBlock() = default;
 
-    void forward(const float* d_input, float* d_output, GPUMemoryArena& inference_arena, cudaStream_t stream);
+    void forward(int batch_size, const float* d_input, float* d_output, GPUMemoryArena& inference_arena, cudaStream_t stream);
 
     // Helper to access sub-layers for weight loading
     LayerNorm& get_attn_norm() { return attention_norm; }
