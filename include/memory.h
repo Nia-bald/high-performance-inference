@@ -29,8 +29,11 @@ public:
 
     void* allocate_bytes(size_t bytes);
     void reset();
+    void reset_to(size_t new_offset); // Reset to a specific offset (for scratch memory management)
 
     size_t get_user() const {return offset;}
     size_t get_total() const {return total_size;}
+    size_t get_remaining() const {return total_size - offset;}
+    double get_usage_percent() const {return (double)offset * 100.0 / (double)total_size;}
 
 };

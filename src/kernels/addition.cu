@@ -44,5 +44,32 @@ namespace kernels {
         }
     }
 
+    __global__ void scale_kernel(
+        float* data,
+        float scale,
+        int length
+    ) {
+        size_t index = blockIdx.x * blockDim.x + threadIdx.x;
+        if (index < length) {
+            data[index] = data[index] * scale;
+        }
+    }
+
+    void launch_scale(
+        float* data,
+        float scale,
+        int length,
+        cudaStream_t stream
+    ) {
+        dim3 blockDim(TILE_SIZE);
+        dim3 gridDim((length + TILE_SIZE - 1) / TILE_SIZE);
+        
+        scale_kernel<<<gridDim, blockDim, 0, stream>>>(data, scale, length);
+        
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("CUDA Error in scale: %s\n", cudaGetErrorString(err));
+        }
+    }
 
 }

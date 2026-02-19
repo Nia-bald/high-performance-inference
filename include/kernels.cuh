@@ -89,6 +89,13 @@ namespace kernels {
         int rows,
         int cols,
         cudaStream_t stream = 0);
+    
+    // Element-wise scaling: output = input * scale
+    void launch_scale(
+        float* data,
+        float scale,
+        int length,
+        cudaStream_t stream = 0);
             // ... existing kernels ...
         
     // Greedy Sampling (Argmax)

@@ -6,11 +6,10 @@
 class SelfAttention {
 
 public:
-    SelfAttention(int seq_len, int d_model, int num_heads, GPUMemoryArena& weights_arena,
+    SelfAttention(int d_model, int num_heads, GPUMemoryArena& weights_arena,
             int qk_dim = 0, int v_dim = 0);
-    ~SelfAttention();
-
-    void forward(int batch_size, const float* d_input, float* d_output, GPUMemoryArena& inference_arena, cudaStream_t stream = 0);
+    ~SelfAttention() = default;
+    void forward(int batch_size, int seq_len, const float* d_input, float* d_output, GPUMemoryArena& inference_arena, cudaStream_t stream = 0);
 
     // helper function for testing
     // during end to end run weights will be loaded from .bin
@@ -18,8 +17,6 @@ public:
 
 private:
 
-    int batch_size;
-    int seq_len;
     int d_model;
     int num_heads;
     int head_dim_qk;

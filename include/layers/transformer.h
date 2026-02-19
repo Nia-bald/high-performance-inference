@@ -9,7 +9,7 @@
 // Parameters: Gamma (Scale) and Beta (Shift)
 class LayerNorm {
 public:
-    LayerNorm(int d_model, float epsilon, GPUMemoryArena& weights_arena);
+    LayerNorm(int d_model, GPUMemoryArena& weights_arena);
     ~LayerNorm() = default;
 
     // input: [Batch, Seq, d_model]
@@ -20,7 +20,6 @@ public:
 
 private:
     int d_model;
-    float epsilon;
     
     // Learnable Parameters
     float* d_gamma; // [d_model]
@@ -60,11 +59,11 @@ private:
 //   2. Output     = Residual_1 + FFN(LayerNorm(Residual_1))
 class TransformerBlock {
 public:
-    TransformerBlock(int seq_len, int d_model, int num_heads, int d_ff, 
+    TransformerBlock(int d_model, int num_heads, int d_ff, 
                      GPUMemoryArena& weights_arena);
     ~TransformerBlock() = default;
 
-    void forward(int batch_size, const float* d_input, float* d_output, GPUMemoryArena& inference_arena, cudaStream_t stream);
+    void forward(int current_batch_size, int current_seq_len, const float* d_input, float* d_output, GPUMemoryArena& inference_arena, cudaStream_t stream);
 
     // Helper to access sub-layers for weight loading
     LayerNorm& get_attn_norm() { return attention_norm; }
@@ -74,8 +73,6 @@ public:
 
 private:
     int d_model;
-    int seq_len;
-    int batch_size;
 
     // Sub-Layers
     LayerNorm attention_norm;
@@ -96,7 +93,7 @@ public:
     // Main Inference Function
     // Input: d_token_ids [Batch, Seq] (Integers)
     // Output: d_logits [Batch, Seq, Vocab] (Floats)
-    void forward(const int* d_token_ids, float* d_logits, GPUMemoryArena& inference_arena, cudaStream_t stream);
+    void forward(const int* d_token_ids, float* d_logits, int current_batch_size, int current_seq_len, GPUMemoryArena& inference_arena, cudaStream_t stream);
 
     // Accessors for weight loading
     TransformerBlock* get_block(int i) { return layers[i]; }

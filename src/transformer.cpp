@@ -9,15 +9,32 @@ Transformer::Transformer(int vocab_size, int max_seq_len, int d_model, int num_h
 {
     // 1. Allocate Weights
     d_token_embedding_table = weights_arena.allocate<float>(vocab_size * d_model);
+    printf("[Transformer] Allocated token embeddings: %.2f MB used, %.2f%% full\n", 
+           weights_arena.get_user() / (1024.0 * 1024.0), weights_arena.get_usage_percent());
+    
     d_pos_embedding_table   = weights_arena.allocate<float>(max_seq_len * d_model);
+    printf("[Transformer] Allocated position embeddings: %.2f MB used, %.2f%% full\n", 
+           weights_arena.get_user() / (1024.0 * 1024.0), weights_arena.get_usage_percent());
+    
     d_lm_head               = weights_arena.allocate<float>(d_model * vocab_size);
+    printf("[Transformer] Allocated LM head: %.2f MB used, %.2f%% full\n", 
+           weights_arena.get_user() / (1024.0 * 1024.0), weights_arena.get_usage_percent());
 
     // 2. Create Blocks
     for (int i = 0; i < num_layers; ++i) {
         layers.push_back(new TransformerBlock(d_model, num_heads, d_ff, weights_arena));
+        if ((i + 1) % 3 == 0 || i == num_layers - 1) {
+            printf("[Transformer] Created %d/%d blocks: %.2f MB used, %.2f%% full\n", 
+                   i + 1, num_layers, weights_arena.get_user() / (1024.0 * 1024.0), 
+                   weights_arena.get_usage_percent());
+        }
     }
 
     printf("[Transformer] Initialized: L=%d, H=%d, D=%d, Vocab=%d\n", num_layers, num_heads, d_model, vocab_size);
+    printf("[Transformer] Final memory usage: %.2f MB / %.2f MB (%.2f%%)\n", 
+           weights_arena.get_user() / (1024.0 * 1024.0), 
+           weights_arena.get_total() / (1024.0 * 1024.0),
+           weights_arena.get_usage_percent());
 }
 
 // --- Forward Pass ---
@@ -46,8 +63,7 @@ void Transformer::forward(const int* d_token_ids, float* d_logits,
     for (int i = 0; i < num_layers; ++i) {
 
     // Run Layer: Read from d_in, Write to d_out
-    layers[i]->forward(d_in, d_out, inference_arena, 
-        current_batch_size, current_seq_len, stream);
+    layers[i]->forward(current_batch_size, current_seq_len, d_in, d_out, inference_arena, stream);
 
     // Optimization: Reset the arena to free specific "intra-layer" scratch memory 
     // (like Q, K, V projections) that isn't needed for the next layer.
