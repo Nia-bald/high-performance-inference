@@ -2,7 +2,7 @@
 #include "memory.h"
 #include <stdio.h>
 
-#define TILE_SIZE 16
+#define TILE_SIZE 2
 
 // only works properly when stride length is multiple of tilesize
 
@@ -54,9 +54,9 @@ namespace kernels {
 
             __syncthreads();
         }
-
-        if (row < M && col < N){
-            C[row*N + col] = total;
+        int total_cols = stride_B*(K/stride_K);
+        if (row < M && col < total_cols){
+            C[row*(total_cols) + col] = total;
         }
 
     }
@@ -74,7 +74,7 @@ namespace kernels {
 
         // grid size needs to be floor  floor N/T and floor M/T because the number of threads should match the number elements  in MXN
         dim3 gridDim(
-            (N + TILE_SIZE - 1)/TILE_SIZE, // # of cols
+            (stride_B*(K/stride_K) + TILE_SIZE - 1)/TILE_SIZE, // # of cols
             (M + TILE_SIZE - 1)/TILE_SIZE // # of rows
         );
         // printf("row, col, a, b, Bi, Bj, custom_val\n");

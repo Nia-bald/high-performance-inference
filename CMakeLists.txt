@@ -77,6 +77,7 @@ add_inference_test(test_batched_gemm tests/test_batched_gemm.cu)
 add_inference_test(test_batched_upper_triangulation tests/test_batched_upper_triangulation.cu)
 add_inference_test(test_batched_one_to_one_gemm tests/test_batched_one_to_one_gemm.cu)
 add_inference_test(test_addition tests/test_addition.cu)
+add_inference_test(test_attention tests/test_attention.cu)
 
 message(STATUS "Configured for GTX 1050 Ti (Compute Capability 6.1)")
 message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")
