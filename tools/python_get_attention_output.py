@@ -2,15 +2,29 @@ import torch
 import torch.nn.functional as F
 import math
 import time
+import sys
+import json
 
-def torch_mha_extreme_logging(x, W_q, W_k, W_v, W_o, num_heads, verbose=False):
+def torch_mha(x, W_q, W_k, W_v, W_o, num_heads, verbose=False):
+    """
+    Multi-head self-attention (causal) reference implementation.
+
+    Args:
+        x:  (B, T, D) input tensor
+        W_q, W_k, W_v, W_o:  (D, D) weight matrices  (or custom dims for GQA)
+        num_heads: number of attention heads
+        verbose: print step-by-step logging
+
+    Returns:
+        output: (B, T, D) tensor
+    """
     B, T, D = x.shape
     head_dim = D // num_heads
 
     if verbose:
-        print("="*50)
+        print("=" * 50)
         print("🚀 STARTING ATTENTION BLOCK (EXTREME LOGGING)")
-        print("="*50)
+        print("=" * 50)
         print(f"[INIT] Batch: {B}, SeqLen: {T}, Dim: {D}, Heads: {num_heads}, HeadDim: {head_dim}\n")
         print("-" * 30 + "\nSTEP 0: Initial Inputs and Weights")
         print(f"Input x | Shape {x.shape}:\n{x}\n")
@@ -91,46 +105,102 @@ def torch_mha_extreme_logging(x, W_q, W_k, W_v, W_o, num_heads, verbose=False):
     output = context_concat @ W_o
     if verbose:
         print(f"Final Output | Shape {output.shape}:\n{output}\n")
-        print("="*50)
+        print("=" * 50)
         print("🏁 ATTENTION BLOCK COMPLETE")
-        print("="*50)
+        print("=" * 50)
 
     return output
 
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--verbose", action="store_true", help="Enable step-by-step logging")
-    args = parser.parse_args()
 
-    if args.verbose:
-        torch.set_printoptions(profile="full")
+# ---------------------------------------------------------------------------
+# Generation mode: called by the CUDA test to produce ground-truth output.
+#
+# Usage:
+#   python python_get_attention_output.py --generate \
+#       --d_model 64 --num_heads 2 --batch_size 8 --seq_len 2 --seed 42
+#
+# Output (to stdout, parseable by the C++ test):
+#   LINE 1:  <python_time_ms>
+#   LINE 2:  <float> <float> ...   (input,  B*T*D  floats)
+#   LINE 3:  <float> <float> ...   (W_q,    D*D    floats, row-major)
+#   LINE 4:  <float> <float> ...   (W_k,    D*D    floats)
+#   LINE 5:  <float> <float> ...   (W_v,    D*D    floats)
+#   LINE 6:  <float> <float> ...   (W_o,    D*D    floats)
+#   LINE 7:  <float> <float> ...   (expected output, B*T*D floats)
+# ---------------------------------------------------------------------------
+
+def _floats_to_line(tensor: torch.Tensor) -> str:
+    """Flatten tensor and return space-separated string of floats."""
+    flat = tensor.detach().cpu().contiguous().view(-1).tolist()
+    return " ".join(f"{v:.8g}" for v in flat)
+
+
+def generate_mode(d_model: int, num_heads: int, batch_size: int, seq_len: int, seed: int):
+    """Generate random inputs/weights, compute attention, print results."""
+    torch.manual_seed(seed)
 
     with torch.no_grad():
-        H = 2   # Number of heads
-        D = 64  # d_model
-        B = 8   # Batch
-        T = 2   # Sequence Length
+        # Random inputs and weights (small magnitude to keep floats well-behaved)
+        x   = torch.randn(batch_size, seq_len, d_model, dtype=torch.float32)
+        W_q = torch.randn(d_model, d_model, dtype=torch.float32) * 0.1
+        W_k = torch.randn(d_model, d_model, dtype=torch.float32) * 0.1
+        W_v = torch.randn(d_model, d_model, dtype=torch.float32) * 0.1
+        W_o = torch.randn(d_model, d_model, dtype=torch.float32) * 0.1
 
-        # ---------------------------------------------------------
-        # Deterministic Matrix Generation (Acts exactly like hardcoding)
-        # ---------------------------------------------------------
-
-        # Input (B=1, T=2, D=32) -> 64 elements
-        x = torch.linspace(1.0, float(B*T*D), steps=B*T*D, dtype=torch.float32).view(B, T, D)
-
-        # Weight Matrices (D=32, D=32) -> 1024 elements each
-        W_q = torch.linspace(1.0, float(D*D), steps=D*D, dtype=torch.float32).view(D, D)
-        W_k = torch.linspace(1.0, float(D*D), steps=D*D, dtype=torch.float32).view(D, D)
-        W_v = torch.linspace(1.0, float(D*D), steps=D*D, dtype=torch.float32).view(D, D)
-
-        # For W_o, creating a true Identity matrix (pass-through)
-        # so the output directly reflects the concatenated head contexts.
-        W_o = torch.linspace(1.0, float(D*D), steps=D*D, dtype=torch.float32).view(D, D)
-
-        # Run
+        # Time the Python computation
         start = time.perf_counter()
-        final_out = torch_mha_extreme_logging(x, W_q, W_k, W_v, W_o, H, verbose=args.verbose)
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        print(f"⏱️  Time taken: {elapsed_ms:.2f} ms")
+        output = torch_mha(x, W_q, W_k, W_v, W_o, num_heads, verbose=False)
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
 
+        # Print results (one item per line, easy to parse in C++)
+        print(f"{elapsed_ms:.6f}")           # line 1 – python time in ms
+        print(_floats_to_line(x))            # line 2 – input
+        print(_floats_to_line(W_q))          # line 3 – W_q
+        print(_floats_to_line(W_k))          # line 4 – W_k
+        print(_floats_to_line(W_v))          # line 5 – W_v
+        print(_floats_to_line(W_o))          # line 6 – W_o
+        print(_floats_to_line(output))       # line 7 – expected output
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="PyTorch multi-head attention reference")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="Enable step-by-step logging (interactive mode)")
+    parser.add_argument("--generate", action="store_true",
+                        help="Generate random test data and expected output for CUDA test")
+
+    # Parameters for --generate mode
+    parser.add_argument("--d_model",    type=int, default=64)
+    parser.add_argument("--num_heads",  type=int, default=2)
+    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--seq_len",    type=int, default=2)
+    parser.add_argument("--seed",       type=int, default=42)
+
+    args = parser.parse_args()
+
+    if args.generate:
+        # Machine-readable output for the CUDA test
+        generate_mode(args.d_model, args.num_heads, args.batch_size, args.seq_len, args.seed)
+    else:
+        # Interactive / verbose mode (legacy behaviour)
+        if args.verbose:
+            torch.set_printoptions(profile="full")
+
+        with torch.no_grad():
+            H = 2    # Number of heads
+            D = 64   # d_model
+            B = 8    # Batch
+            T = 2    # Sequence Length
+
+            x   = torch.linspace(1.0, float(B * T * D), steps=B * T * D, dtype=torch.float32).view(B, T, D)
+            W_q = torch.linspace(1.0, float(D * D), steps=D * D, dtype=torch.float32).view(D, D)
+            W_k = torch.linspace(1.0, float(D * D), steps=D * D, dtype=torch.float32).view(D, D)
+            W_v = torch.linspace(1.0, float(D * D), steps=D * D, dtype=torch.float32).view(D, D)
+            W_o = torch.linspace(1.0, float(D * D), steps=D * D, dtype=torch.float32).view(D, D)
+
+            start = time.perf_counter()
+            final_out = torch_mha(x, W_q, W_k, W_v, W_o, H, verbose=args.verbose)
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"⏱️  Time taken: {elapsed_ms:.2f} ms")
