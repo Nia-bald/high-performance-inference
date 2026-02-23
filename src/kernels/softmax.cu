@@ -69,6 +69,7 @@ namespace kernels {
         if (threadIdx.x == 0){
             s_sum = 0;
         }
+        __syncthreads();
         float local_sum = 0;
 
         for (int i = threadIdx.x; i < cols; i+= blockDim.x){

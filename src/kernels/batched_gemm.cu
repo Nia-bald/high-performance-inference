@@ -2,7 +2,7 @@
 #include "memory.h"
 #include <stdio.h>
 
-#define TILE_SIZE 2
+#define TILE_SIZE 16
 
 // only works properly when stride length is multiple of tilesize
 

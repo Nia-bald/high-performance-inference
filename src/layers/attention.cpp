@@ -110,7 +110,7 @@ void SelfAttention::forward(int batch_size, int seq_len, const float* d_input, f
     kernels::launch_batch_upper_triangulate(
         d_attention, 
         seq_len*batch_size,
-        this->total_qk_dim,
+        seq_len*this->num_heads,
         seq_len,
         seq_len,
         stream);

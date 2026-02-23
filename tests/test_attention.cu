@@ -96,17 +96,29 @@ static int run_python_reference(
         return -1;
     }
 
-    // Read all output into a vector of lines
+    // Read all output into a vector of lines (handles arbitrarily long lines)
     std::vector<std::string> lines;
     {
-        char buf[1 << 20]; // 1 MB buffer per line – weights can be large
+        std::string current_line;
+        char buf[65536];
         while (std::fgets(buf, sizeof(buf), pipe)) {
-            std::string s(buf);
-            // strip trailing newline
-            while (!s.empty() && (s.back() == '\n' || s.back() == '\r'))
-                s.pop_back();
-            if (!s.empty())
-                lines.push_back(std::move(s));
+            current_line += buf;
+            // fgets includes the newline if one was read; check for it
+            if (!current_line.empty() && current_line.back() == '\n') {
+                // Strip trailing newline/carriage return
+                while (!current_line.empty() && (current_line.back() == '\n' || current_line.back() == '\r'))
+                    current_line.pop_back();
+                if (!current_line.empty())
+                    lines.push_back(std::move(current_line));
+                current_line.clear();
+            }
+        }
+        // Flush any remaining content without trailing newline
+        if (!current_line.empty()) {
+            while (!current_line.empty() && (current_line.back() == '\n' || current_line.back() == '\r'))
+                current_line.pop_back();
+            if (!current_line.empty())
+                lines.push_back(std::move(current_line));
         }
     }
 
@@ -151,15 +163,14 @@ int main() {
     auto test_start = std::chrono::high_resolution_clock::now();
 
     // ---- Test parameters (feel free to change) ----
-    const int D_MODEL    = 64;
-    const int NUM_HEADS  = 2;
-    const int BATCH_SIZE = 8;
-    const int SEQ_LEN    = 2;
+    const int D_MODEL    = 1024;
+    const int NUM_HEADS  = 4;
+    const int BATCH_SIZE = 16;
+    const int SEQ_LEN    = 16;
 
     // Random seed – use current time so every run is truly random
-    const int SEED = static_cast<int>(
-        std::chrono::system_clock::now().time_since_epoch().count() % 100000);
-    std::cout << "Using random seed: " << SEED << std::endl;
+    const int SEED = 42;
+    std::cout << "Using fixed seed: " << SEED << std::endl;
 
     // ---- Step 1: Get Python ground truth (random weights + expected output) ----
     double python_time_ms = 0.0;
@@ -200,14 +211,21 @@ int main() {
 
     std::cout << "\nLaunching CUDA SelfAttention forward pass..." << std::endl;
 
-    // Time the CUDA forward pass
-    auto cuda_start = std::chrono::high_resolution_clock::now();
-    attention.forward(BATCH_SIZE, SEQ_LEN, d_input, d_output, inference_arena, 0);
-    CUDA_CHECK(cudaDeviceSynchronize());
-    auto cuda_end = std::chrono::high_resolution_clock::now();
+    // Time the CUDA forward pass using CUDA events (accurate GPU timing)
+    cudaEvent_t cuda_start, cuda_end;
+    CUDA_CHECK(cudaEventCreate(&cuda_start));
+    CUDA_CHECK(cudaEventCreate(&cuda_end));
 
-    std::chrono::duration<double, std::milli> cuda_duration = cuda_end - cuda_start;
-    double cuda_time_ms = cuda_duration.count();
+    CUDA_CHECK(cudaEventRecord(cuda_start, 0));
+    attention.forward(BATCH_SIZE, SEQ_LEN, d_input, d_output, inference_arena, 0);
+    CUDA_CHECK(cudaEventRecord(cuda_end, 0));
+    CUDA_CHECK(cudaEventSynchronize(cuda_end));
+
+    float cuda_time_ms = 0.0f;
+    CUDA_CHECK(cudaEventElapsedTime(&cuda_time_ms, cuda_start, cuda_end));
+
+    CUDA_CHECK(cudaEventDestroy(cuda_start));
+    CUDA_CHECK(cudaEventDestroy(cuda_end));
 
     // Copy output back to host
     CUDA_CHECK(cudaMemcpy(h_output.data(), d_output,
