@@ -39,6 +39,7 @@ set(LAYER_SOURCES
     src/layers/transformer_block.cpp
     src/memory.cpp
     src/utils/loader.cpp # Assuming you put the loader helper here
+    src/tokenizer.cpp
 )
 
 # --- Define the Shared Library ---

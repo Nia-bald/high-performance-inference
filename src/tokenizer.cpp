@@ -56,22 +56,100 @@ void GPT2Tokenizer::build_byte_encoder() {
 
 // 2. Load Vocab and Merges
 bool GPT2Tokenizer::load(const std::string& vocab_path, const std::string& merges_path) {
-    // A. Load Encoder (JSON-like)
-    // Format: {"token": id, ...}
+    // A. Load Encoder from vocab.json
+    // The real GPT-2 vocab.json is a single-line JSON: {"token": id, ...}
     std::ifstream v_file(vocab_path);
-    if (!v_file.is_open()) return false;
+    if (!v_file.is_open()) {
+        std::cerr << "[Tokenizer] Failed to open vocab file: " << vocab_path << std::endl;
+        return false;
+    }
     
-    // Quick & Dirty JSON parser (Assume simple format: "token": id)
-    std::string line;
-    while (std::getline(v_file, line)) {
-        size_t colon = line.find(':');
-        if (colon != std::string::npos) {
-            std::string key = line.substr(1, colon - 2); // strip quotes
-            int val = std::stoi(line.substr(colon + 1));
+    // Read entire file into a string
+    std::string json_content((std::istreambuf_iterator<char>(v_file)),
+                              std::istreambuf_iterator<char>());
+    v_file.close();
+    
+    // Parse JSON: iterate character by character
+    size_t pos = 0;
+    auto skip_ws = [&]() {
+        while (pos < json_content.size() && isspace(json_content[pos])) pos++;
+    };
+    
+    auto parse_string = [&]() -> std::string {
+        std::string result;
+        pos++; // skip opening quote
+        while (pos < json_content.size() && json_content[pos] != '"') {
+            if (json_content[pos] == '\\') {
+                pos++;
+                if (pos >= json_content.size()) break;
+                switch (json_content[pos]) {
+                    case '"':  result += '"';  break;
+                    case '\\': result += '\\'; break;
+                    case '/':  result += '/';  break;
+                    case 'n':  result += '\n'; break;
+                    case 'r':  result += '\r'; break;
+                    case 't':  result += '\t'; break;
+                    case 'u': {
+                        // Parse 4-hex-digit unicode escape
+                        if (pos + 4 < json_content.size()) {
+                            std::string hex = json_content.substr(pos + 1, 4);
+                            unsigned int codepoint = std::stoul(hex, nullptr, 16);
+                            // Convert to UTF-8 (for BMP characters)
+                            if (codepoint <= 0x7F) {
+                                result += (char)codepoint;
+                            } else if (codepoint <= 0x7FF) {
+                                result += (char)(0xC0 | (codepoint >> 6));
+                                result += (char)(0x80 | (codepoint & 0x3F));
+                            } else {
+                                result += (char)(0xE0 | (codepoint >> 12));
+                                result += (char)(0x80 | ((codepoint >> 6) & 0x3F));
+                                result += (char)(0x80 | (codepoint & 0x3F));
+                            }
+                            pos += 4;
+                        }
+                        break;
+                    }
+                    default: result += json_content[pos]; break;
+                }
+            } else {
+                result += json_content[pos];
+            }
+            pos++;
+        }
+        pos++; // skip closing quote
+        return result;
+    };
+    
+    auto parse_int = [&]() -> int {
+        skip_ws();
+        size_t start = pos;
+        if (pos < json_content.size() && json_content[pos] == '-') pos++;
+        while (pos < json_content.size() && isdigit(json_content[pos])) pos++;
+        return std::stoi(json_content.substr(start, pos - start));
+    };
+    
+    skip_ws();
+    if (pos < json_content.size() && json_content[pos] == '{') pos++; // skip '{'
+    
+    while (pos < json_content.size()) {
+        skip_ws();
+        if (json_content[pos] == '}') break;
+        if (json_content[pos] == ',') { pos++; continue; }
+        
+        // Parse "key": value
+        if (json_content[pos] == '"') {
+            std::string key = parse_string();
+            skip_ws();
+            if (pos < json_content.size() && json_content[pos] == ':') pos++;
+            int val = parse_int();
             encoder[key] = val;
             decoder[val] = key;
+        } else {
+            pos++; // skip unexpected character
         }
     }
+    
+    std::cout << "[Tokenizer] Loaded " << encoder.size() << " vocab entries" << std::endl;
 
     // B. Load Merges
     // Format: "u g" (meaning merge 'u' and 'g' -> 'ug')
@@ -79,6 +157,7 @@ bool GPT2Tokenizer::load(const std::string& vocab_path, const std::string& merge
     if (!m_file.is_open()) return false;
 
     // Skip first line (version comment)
+    std::string line;
     std::getline(m_file, line); 
 
     while (std::getline(m_file, line)) {
@@ -192,9 +271,26 @@ std::string GPT2Tokenizer::decode(const std::vector<int>& ids) {
     std::string text;
     for (int id : ids) {
         if (decoder.count(id)) {
-            text += decoder[id];
+            const std::string& token_str = decoder[id];
+            // Reverse the byte-to-unicode encoding
+            // Each character in token_str is a unicode char from the byte_encoder mapping
+            // We need to convert it back to the original byte
+            std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+            std::wstring wide = converter.from_bytes(token_str);
+            for (wchar_t wc : wide) {
+                if (byte_decoder.count(wc)) {
+                    text += (char)byte_decoder[wc];
+                } else {
+                    // Fallback: just convert directly
+                    text += converter.to_bytes(wc);
+                }
+            }
         }
     }
-    // Reverse the byte encoding here if we applied it
     return text;
+}
+
+// 7. Decode a single token ID to string
+std::string GPT2Tokenizer::decode_token(int id) {
+    return decode({id});
 }

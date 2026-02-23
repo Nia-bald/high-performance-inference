@@ -18,6 +18,7 @@ public:
     // Main API
     std::vector<int> encode(const std::string& text);
     std::string decode(const std::vector<int>& ids);
+    std::string decode_token(int id);  // Decode a single token ID
 
 private:
     // --- Internal Data Structures ---

@@ -1,4 +1,5 @@
 #include "transformer.h"
+#include "tokenizer.h"
 #include "memory.h"
 #include "kernels.cuh"
 #include <iostream>
@@ -107,10 +108,21 @@ int main() {
     // --- 3. Load Weights ---
     load_gpt2_weights(gpt, "/home/niare/Projects/transformer_inference_engine/gpt2_weights.bin", num_layers, d_model, vocab_size, max_seq_len, d_ff);
 
+    // --- 3.5 Load Tokenizer ---
+    GPT2Tokenizer tokenizer;
+    if (!tokenizer.load("/home/niare/Projects/transformer_inference_engine/vocab.json",
+                        "/home/niare/Projects/transformer_inference_engine/merges.txt")) {
+        std::cerr << "Failed to load tokenizer files!" << std::endl;
+        return 1;
+    }
+
     // --- 4. Prepare Input ---
     // "Alan Turing was a" -> [36235, 39141, 373, 257] (Example IDs)
     std::vector<int> input_ids = {36235, 39141, 373, 257};
     int max_new_tokens = 20;
+
+    // Print the initial prompt decoded
+    std::cout << "Prompt: " << tokenizer.decode(input_ids) << std::endl;
 
     // Allocate Input/Output on GPU (persistent buffers)
     // We need a growing buffer for input_ids
@@ -182,7 +194,7 @@ int main() {
         }
 
         // E. Print and Append
-        std::cout << next_token_id << " " << std::flush;
+        std::cout << tokenizer.decode_token(next_token_id) << std::flush;
         input_ids.push_back(next_token_id);
 
         // Reset Arena scratchpad (keeping weights intact)
