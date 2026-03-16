@@ -88,4 +88,54 @@ namespace kernels {
     }
 
 
+    __global__ void perform_batched_one_to_one_naive_gmm(
+        const float* A,  // [M, K]
+        const float* B,  // [K, N]
+        float* C, // [M, N]
+        int M, int N, int K,
+        int stride_A, int stride_B, int stride_K
+    ){
+        size_t row = blockIdx.y * blockDim.y + threadIdx.y;
+        size_t col = blockIdx.x * blockDim.x + threadIdx.x;
+
+        if (row >= M || col >= N) return;
+
+        int B_i = row / stride_A;
+        int B_j = col / stride_B;
+
+        float total = 0.0f;
+        for (int k = 0; k < stride_K; ++k) {
+            float a_val = A[row * K + B_j * stride_K + k];
+            float b_val = B[(B_i * stride_K + k) * N + col];
+            total += a_val * b_val;
+        }
+
+        C[row * N + col] = total;
+    }
+
+
+    void launch_batched_one_to_one_gemm_naive(
+        const float* A,  // [M, K]
+        const float* B,  // [K, N]
+        float* C, // [M, N]
+        int M, int N, int K,
+        int stride_A, int stride_B, int stride_K,
+        cudaStream_t stream
+    ){
+        dim3 blockDim(TILE_SIZE, TILE_SIZE);
+
+        dim3 gridDim(
+            (N + TILE_SIZE - 1) / TILE_SIZE,
+            (M + TILE_SIZE - 1) / TILE_SIZE
+        );
+
+        perform_batched_one_to_one_naive_gmm<<<gridDim, blockDim, 0, stream>>>(A, B, C, M, N, K, stride_A, stride_B, stride_K);
+
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("CUDA Error in naive one-to-one GEMM: %s\n", cudaGetErrorString(err));
+        }
+    }
+
+
 }

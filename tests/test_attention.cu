@@ -165,8 +165,8 @@ int main() {
     // ---- Test parameters (feel free to change) ----
     const int D_MODEL    = 1024;
     const int NUM_HEADS  = 4;
-    const int BATCH_SIZE = 16;
-    const int SEQ_LEN    = 16;
+    const int BATCH_SIZE = 32;
+    const int SEQ_LEN    = 32;
 
     // Random seed – use current time so every run is truly random
     const int SEED = 42;
@@ -190,7 +190,7 @@ int main() {
     std::vector<float> h_output(total_elements);
 
     // Setup memory arenas
-    size_t arena_size = static_cast<size_t>(1024) * 1024 * 16; // 16 MB
+    size_t arena_size = static_cast<size_t>(1024) * 1024 * 16 * 4; // 16 MB
     GPUMemoryArena weights_arena(arena_size);
     GPUMemoryArena inference_arena(arena_size);
 

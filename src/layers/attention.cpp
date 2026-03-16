@@ -85,7 +85,7 @@ void SelfAttention::forward(int batch_size, int seq_len, const float* d_input, f
 
     float* d_attention = inference_arena.allocate<float>(attention_size);
 
-    kernels::launch_batched_gemm(  // transposed matrix batches matrix mult
+    kernels::launch_batched_gemm_naive(  // transposed matrix batches matrix mult
         d_Q, 
         d_K_transpose, 
         d_attention, 
@@ -125,7 +125,7 @@ void SelfAttention::forward(int batch_size, int seq_len, const float* d_input, f
     
     float* d_A_mult_V = inference_arena.allocate<float>(this->total_qk_dim * seq_len * batch_size);
 
-    kernels::launch_batched_one_to_one_gemm(
+    kernels::launch_batched_one_to_one_gemm_naive(
         d_attention, 
         d_V, 
         d_A_mult_V, 
