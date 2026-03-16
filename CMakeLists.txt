@@ -55,6 +55,20 @@ target_include_directories(inference_lib PUBLIC
     ${CMAKE_SOURCE_DIR}/include/layers  # <--- ADD THIS LINE
 )
 
+# =====================================================================
+# --- PROFILING CONFIGURATION ---
+# =====================================================================
+
+# 1. Enable source-line mapping in Nsight Compute (ncu)
+# This allows ncu to point to the exact C++ line in your .cu files 
+# causing a bottleneck, rather than just showing raw assembly (SASS).
+target_compile_options(inference_lib PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
+
+# 2. Link NVTX for Nsight Systems (nsys) timeline markers
+# This finds the local CUDA installation and explicitly links the 
+# NVTX v3 library so you can label your C++ functions.
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(inference_lib PUBLIC CUDA::nvtx3)
 # --- Main Engine Executable ---
 if(EXISTS "${CMAKE_SOURCE_DIR}/src/main.cpp")
     add_executable(gpt2_engine src/main.cpp)
