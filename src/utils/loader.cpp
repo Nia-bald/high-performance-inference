@@ -73,8 +73,14 @@ void load_gpt2_weights(Transformer& gpt, const std::string& path,
     gpt.get_final_norm().load_weights(f_gamma.data(), f_beta.data());
 
     // 4. LM Head
+    // HF nn.Linear stores weights as [out_features, in_features] = [V, D]
+    // but our GEMM expects B to be [D, V], so we transpose on the host.
     read_floats(f, buf, d_model * vocab_size);
-    gpt.load_head(buf.data());
+    std::vector<float> lm_head_transposed(d_model * vocab_size);
+    for (int v = 0; v < vocab_size; ++v)
+        for (int d = 0; d < d_model; ++d)
+            lm_head_transposed[d * vocab_size + v] = buf[v * d_model + d];
+    gpt.load_head(lm_head_transposed.data());
 
     f.close();
     std::cout << ">>> Weights Loaded Successfully!" << std::endl;
