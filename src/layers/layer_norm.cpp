@@ -32,3 +32,11 @@ void LayerNorm::forward(const float* d_input, float* d_output,
         stream
     );
 }
+
+size_t LayerNorm::estimate_weight_memory(int d_model) {
+    return 2 * d_model * sizeof(float);
+}
+
+size_t LayerNorm::estimate_inference_scratch() {
+    return 0; // LayerNorm doesn't use inference arena internally
+}

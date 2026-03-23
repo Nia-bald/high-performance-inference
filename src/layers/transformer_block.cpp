@@ -59,3 +59,26 @@ void TransformerBlock::forward(int current_batch_size, int current_seq_len, cons
         stream
     );
 }
+
+size_t TransformerBlock::estimate_weight_memory(int d_model, int num_heads, int d_ff) {
+    return LayerNorm::estimate_weight_memory(d_model) +
+           SelfAttention::estimate_weight_memory(d_model, num_heads) +
+           LayerNorm::estimate_weight_memory(d_model) +
+           FeedForward::estimate_weight_memory(d_model, d_ff);
+}
+
+size_t TransformerBlock::estimate_inference_scratch(int max_batch_size, int max_seq_len, int d_model, int num_heads, int d_ff) {
+    size_t tensor_size = max_batch_size * max_seq_len * d_model;
+    size_t block_scratch = 0;
+    
+    block_scratch += tensor_size * sizeof(float); // d_norm1_out
+    block_scratch += tensor_size * sizeof(float); // d_attn_out
+    block_scratch += SelfAttention::estimate_inference_scratch(max_batch_size, max_seq_len, d_model, num_heads);
+    block_scratch += tensor_size * sizeof(float); // d_res1
+    
+    block_scratch += tensor_size * sizeof(float); // d_norm2_out
+    block_scratch += tensor_size * sizeof(float); // d_ffn_out
+    block_scratch += FeedForward::estimate_inference_scratch(max_batch_size, max_seq_len, d_ff);
+    
+    return block_scratch;
+}

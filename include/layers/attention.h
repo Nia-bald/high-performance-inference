@@ -11,6 +11,10 @@ public:
     ~SelfAttention() = default;
     void forward(int batch_size, int seq_len, const float* d_input, float* d_output, GPUMemoryArena& inference_arena, cudaStream_t stream = 0);
 
+    // Static Estimators
+    static size_t estimate_weight_memory(int d_model, int num_heads, int qk_dim = 0, int v_dim = 0);
+    static size_t estimate_inference_scratch(int max_batch_size, int max_seq_len, int d_model, int num_heads, int qk_dim = 0, int v_dim = 0);
+
     // helper function for testing
     // during end to end run weights will be loaded from .bin
     void load_weights(const float* h_W_q, const float* h_W_k, const float* h_W_v, const float* h_W_o,

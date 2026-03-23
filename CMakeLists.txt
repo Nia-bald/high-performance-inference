@@ -41,6 +41,8 @@ set(LAYER_SOURCES
     src/utils/loader.cpp # Assuming you put the loader helper here
     src/tokenizer.cpp
     src/pipeline/pipeline_engine.cpp
+    src/batch_executor.cpp
+    src/batch_executor_orchestrator.cpp
 )
 
 # --- Define the Shared Library ---

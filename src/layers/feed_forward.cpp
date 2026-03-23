@@ -73,3 +73,11 @@ void FeedForward::forward(const float* d_input, float* d_output, GPUMemoryArena&
     // Output = Output + b_down
     kernels::launch_bias_add(d_output, d_b_down, total_rows, d_model, stream);
 }
+
+size_t FeedForward::estimate_weight_memory(int d_model, int d_ff) {
+    return (d_model * d_ff + d_ff + d_ff * d_model + d_model) * sizeof(float);
+}
+
+size_t FeedForward::estimate_inference_scratch(int max_batch_size, int max_seq_len, int d_ff) {
+    return (max_batch_size * max_seq_len * d_ff) * sizeof(float);
+}
