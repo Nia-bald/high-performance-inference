@@ -52,9 +52,13 @@ SelfAttention::SelfAttention(int d_model, int num_heads, GPUMemoryArena& weights
     printf("   >> V Head Dim:   %d (Total: %d)\n", head_dim_v, total_v_dim);
 
     this->d_W_q = weights_arena.allocate<float>(d_model*this->total_qk_dim);
+    this->d_b_q = weights_arena.allocate<float>(this->total_qk_dim);
     this->d_W_k = weights_arena.allocate<float>(d_model*this->total_qk_dim);
+    this->d_b_k = weights_arena.allocate<float>(this->total_qk_dim);
     this->d_W_v = weights_arena.allocate<float>(d_model*this->total_v_dim);
+    this->d_b_v = weights_arena.allocate<float>(this->total_v_dim);
     this->d_W_o = weights_arena.allocate<float>(this->total_v_dim*d_model);
+    this->d_b_o = weights_arena.allocate<float>(d_model);
 
 }
 
@@ -69,10 +73,12 @@ void SelfAttention::forward(int batch_size, int seq_len, const float* d_input, f
 
     float* d_Q = inference_arena.allocate<float>(qk_proj_size);
     kernels::launch_gemm_tiled(d_input, this->d_W_q, d_Q, batch_size*seq_len, this->total_qk_dim, this->d_model, stream);
+    kernels::launch_bias_add(d_Q, this->d_b_q, batch_size*seq_len, this->total_qk_dim, stream);
     log_tensor_sample("Q projection", d_Q, qk_proj_size, stream);
 
     float* d_K = inference_arena.allocate<float>(qk_proj_size);
     kernels::launch_gemm_tiled(d_input, this->d_W_k, d_K, batch_size*seq_len, this->total_qk_dim, this->d_model, stream);
+    kernels::launch_bias_add(d_K, this->d_b_k, batch_size*seq_len, this->total_qk_dim, stream);
     log_tensor_sample("K projection", d_K, qk_proj_size, stream);
 
     float* d_K_transpose = inference_arena.allocate<float>(qk_proj_size);
@@ -81,6 +87,7 @@ void SelfAttention::forward(int batch_size, int seq_len, const float* d_input, f
 
     float* d_V = inference_arena.allocate<float>(qk_proj_size);
     kernels::launch_gemm_tiled(d_input, this->d_W_v, d_V, batch_size*seq_len, this->total_qk_dim, this->d_model, stream);
+    kernels::launch_bias_add(d_V, this->d_b_v, batch_size*seq_len, this->total_qk_dim, stream);
     log_tensor_sample("V projection", d_V, qk_proj_size, stream);
 
     float* d_attention = inference_arena.allocate<float>(attention_size);
@@ -145,10 +152,11 @@ void SelfAttention::forward(int batch_size, int seq_len, const float* d_input, f
         d_W_o,
         d_output,
         batch_size*seq_len,
-        this->total_qk_dim,
+        this->d_model,
         this->total_qk_dim,
         stream
     );
+    kernels::launch_bias_add(d_output, this->d_b_o, batch_size*seq_len, this->d_model, stream);
 
     log_tensor_sample("Output (O projection)", d_output, batch_size * seq_len * this->d_model, stream);
 }
@@ -156,13 +164,24 @@ void SelfAttention::forward(int batch_size, int seq_len, const float* d_input, f
 // --- Add this to src/layers/attention.cpp ---
 
 void SelfAttention::load_weights(const float* h_W_q, const float* h_W_k, 
-    const float* h_W_v, const float* h_W_o) 
+    const float* h_W_v, const float* h_W_o, 
+    const float* h_b_q, const float* h_b_k, 
+    const float* h_b_v, const float* h_b_o) 
 {
-// Each weight matrix in standard attention is [d_model, d_model]
-size_t matrix_size = d_model * d_model * sizeof(float);
+size_t matrix_size = d_model * this->total_qk_dim * sizeof(float);
+size_t bias_size = this->total_qk_dim * sizeof(float);
+size_t matrix_size_o = this->total_qk_dim * d_model * sizeof(float);
+size_t bias_size_o = d_model * sizeof(float);
 
 cudaMemcpy(d_W_q, h_W_q, matrix_size, cudaMemcpyHostToDevice);
+cudaMemcpy(d_b_q, h_b_q, bias_size, cudaMemcpyHostToDevice);
+
 cudaMemcpy(d_W_k, h_W_k, matrix_size, cudaMemcpyHostToDevice);
+cudaMemcpy(d_b_k, h_b_k, bias_size, cudaMemcpyHostToDevice);
+
 cudaMemcpy(d_W_v, h_W_v, matrix_size, cudaMemcpyHostToDevice);
-cudaMemcpy(d_W_o, h_W_o, matrix_size, cudaMemcpyHostToDevice);
+cudaMemcpy(d_b_v, h_b_v, bias_size, cudaMemcpyHostToDevice);
+
+cudaMemcpy(d_W_o, h_W_o, matrix_size_o, cudaMemcpyHostToDevice);
+cudaMemcpy(d_b_o, h_b_o, bias_size_o, cudaMemcpyHostToDevice);
 }

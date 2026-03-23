@@ -13,14 +13,23 @@
 // but strictly you should use std::regex with the pattern above.
 std::vector<std::string> pre_tokenize(const std::string& text) {
     std::vector<std::string> words;
-    // Simple space-based split for brevity. 
-    // In production, use the full GPT-2 regex logic.
-    std::stringstream ss(text);
-    std::string word;
-    while (ss >> word) {
-        // Note: GPT-2 preserves leading spaces as a specific character (Ġ).
-        // This is a simplified "Chat" version.
-        words.push_back(word);
+    // GPT-2 BPE requires spaces to be replaced by 'Ġ' and prepended to the word
+    std::string current_word;
+    
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == ' ' || text[i] == '\n') {
+            if (!current_word.empty()) {
+                words.push_back(current_word);
+            }
+            // Start new word with special space char (or newline mapping if we wanted)
+            if (text[i] == ' ') current_word = "Ġ";
+            else current_word = "Ċ"; // Newline in GPT-2 is Ċ
+        } else {
+            current_word += text[i];
+        }
+    }
+    if (!current_word.empty()) {
+        words.push_back(current_word);
     }
     return words;
 }
@@ -181,18 +190,31 @@ std::set<std::pair<std::string, std::string>> GPT2Tokenizer::get_pairs(const std
     return pairs;
 }
 
-// 4. Core BPE Algorithm
+// 4. Helper: UTF-8 aware string splitter
+std::vector<std::string> utf8_split(const std::string& str) {
+    std::vector<std::string> chars;
+    size_t i = 0;
+    while (i < str.length()) {
+        unsigned char c = str[i];
+        size_t len = 1;
+        if ((c & 0x80) == 0) len = 1;
+        else if ((c & 0xE0) == 0xC0) len = 2;
+        else if ((c & 0xF0) == 0xE0) len = 3;
+        else if ((c & 0xF8) == 0xF0) len = 4;
+        chars.push_back(str.substr(i, len));
+        i += len;
+    }
+    return chars;
+}
+
+// 5. Core BPE Algorithm
 std::vector<std::string> GPT2Tokenizer::bpe(const std::string& token) {
     if (cache.find(token) != cache.end()) {
         return cache[token];
     }
 
-    // Initial Split: Character by character
-    std::vector<std::string> word;
-    // Note: In real implementation, handle multi-byte chars correctly here
-    for (char c : token) {
-        word.push_back(std::string(1, c));
-    }
+    // Initial Split: UTF-8 character by UTF-8 character
+    std::vector<std::string> word = utf8_split(token);
 
     // Iteratively merge
     while (true) {
@@ -242,7 +264,7 @@ std::vector<std::string> GPT2Tokenizer::bpe(const std::string& token) {
     return word;
 }
 
-// 5. Encode (Text -> IDs)
+// 6. Encode (Text -> IDs)
 std::vector<int> GPT2Tokenizer::encode(const std::string& text) {
     std::vector<int> bpe_tokens;
     
@@ -266,7 +288,7 @@ std::vector<int> GPT2Tokenizer::encode(const std::string& text) {
     return bpe_tokens;
 }
 
-// 6. Decode (IDs -> Text)
+// 7. Decode (IDs -> Text)
 std::string GPT2Tokenizer::decode(const std::vector<int>& ids) {
     std::string text;
     for (int id : ids) {
@@ -290,7 +312,7 @@ std::string GPT2Tokenizer::decode(const std::vector<int>& ids) {
     return text;
 }
 
-// 7. Decode a single token ID to string
+// 8. Decode a single token ID to string
 std::string GPT2Tokenizer::decode_token(int id) {
     return decode({id});
 }

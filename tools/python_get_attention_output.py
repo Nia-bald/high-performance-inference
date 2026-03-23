@@ -5,13 +5,14 @@ import time
 import sys
 import json
 
-def torch_mha(x, W_q, W_k, W_v, W_o, num_heads, verbose=False):
+def torch_mha(x, W_q, b_q, W_k, b_k, W_v, b_v, W_o, b_o, num_heads, verbose=False):
     """
     Multi-head self-attention (causal) reference implementation.
 
     Args:
         x:  (B, T, D) input tensor
         W_q, W_k, W_v, W_o:  (D, D) weight matrices  (or custom dims for GQA)
+        b_q, b_k, b_v, b_o:  (D,) bias vectors
         num_heads: number of attention heads
         verbose: print step-by-step logging
 
@@ -36,9 +37,9 @@ def torch_mha(x, W_q, W_k, W_v, W_o, num_heads, verbose=False):
     # --- 1. Compute Q, K, V ---
     if verbose:
         print("-" * 30 + "\nSTEP 1: Compute Linear Projections (Q, K, V)")
-    Q = x @ W_q
-    K = x @ W_k
-    V = x @ W_v
+    Q = (x @ W_q) + b_q
+    K = (x @ W_k) + b_k
+    V = (x @ W_v) + b_v
     if verbose:
         print(f"Q (x @ W_q) | Shape {Q.shape}:\n{Q}")
         print(f"K (x @ W_k) | Shape {K.shape}:\n{K}")
@@ -101,8 +102,8 @@ def torch_mha(x, W_q, W_k, W_v, W_o, num_heads, verbose=False):
 
     # --- 8. Output Projection ---
     if verbose:
-        print("-" * 30 + "\nSTEP 8: Final Output Projection (Context @ W_o)")
-    output = context_concat @ W_o
+        print("-" * 30 + "\nSTEP 8: Final Output Projection (Context @ W_o) + b_o")
+    output = (context_concat @ W_o) + b_o
     if verbose:
         print(f"Final Output | Shape {output.shape}:\n{output}\n")
         print("=" * 50)
@@ -143,23 +144,31 @@ def generate_mode(d_model: int, num_heads: int, batch_size: int, seq_len: int, s
         # Random inputs and weights (small magnitude to keep floats well-behaved)
         x   = torch.randn(batch_size, seq_len, d_model, dtype=torch.float32)
         W_q = torch.randn(d_model, d_model, dtype=torch.float32) * 0.1
+        b_q = torch.randn(d_model, dtype=torch.float32) * 0.1
         W_k = torch.randn(d_model, d_model, dtype=torch.float32) * 0.1
+        b_k = torch.randn(d_model, dtype=torch.float32) * 0.1
         W_v = torch.randn(d_model, d_model, dtype=torch.float32) * 0.1
+        b_v = torch.randn(d_model, dtype=torch.float32) * 0.1
         W_o = torch.randn(d_model, d_model, dtype=torch.float32) * 0.1
+        b_o = torch.randn(d_model, dtype=torch.float32) * 0.1
 
         # Time the Python computation
         start = time.perf_counter()
-        output = torch_mha(x, W_q, W_k, W_v, W_o, num_heads, verbose=False)
+        output = torch_mha(x, W_q, b_q, W_k, b_k, W_v, b_v, W_o, b_o, num_heads, verbose=False)
         elapsed_ms = (time.perf_counter() - start) * 1000.0
 
         # Print results (one item per line, easy to parse in C++)
         print(f"{elapsed_ms:.6f}")           # line 1 – python time in ms
         print(_floats_to_line(x))            # line 2 – input
         print(_floats_to_line(W_q))          # line 3 – W_q
-        print(_floats_to_line(W_k))          # line 4 – W_k
-        print(_floats_to_line(W_v))          # line 5 – W_v
-        print(_floats_to_line(W_o))          # line 6 – W_o
-        print(_floats_to_line(output))       # line 7 – expected output
+        print(_floats_to_line(b_q))          # line 4 – b_q
+        print(_floats_to_line(W_k))          # line 5 – W_k
+        print(_floats_to_line(b_k))          # line 6 – b_k
+        print(_floats_to_line(W_v))          # line 7 – W_v
+        print(_floats_to_line(b_v))          # line 8 – b_v
+        print(_floats_to_line(W_o))          # line 9 – W_o
+        print(_floats_to_line(b_o))          # line 10 – b_o
+        print(_floats_to_line(output))       # line 11 – expected output
 
 
 if __name__ == "__main__":
@@ -196,11 +205,15 @@ if __name__ == "__main__":
 
             x   = torch.linspace(1.0, float(B * T * D), steps=B * T * D, dtype=torch.float32).view(B, T, D)
             W_q = torch.linspace(1.0, float(D * D), steps=D * D, dtype=torch.float32).view(D, D)
+            b_q = torch.zeros(D, dtype=torch.float32)
             W_k = torch.linspace(1.0, float(D * D), steps=D * D, dtype=torch.float32).view(D, D)
+            b_k = torch.zeros(D, dtype=torch.float32)
             W_v = torch.linspace(1.0, float(D * D), steps=D * D, dtype=torch.float32).view(D, D)
+            b_v = torch.zeros(D, dtype=torch.float32)
             W_o = torch.linspace(1.0, float(D * D), steps=D * D, dtype=torch.float32).view(D, D)
+            b_o = torch.zeros(D, dtype=torch.float32)
 
             start = time.perf_counter()
-            final_out = torch_mha(x, W_q, W_k, W_v, W_o, H, verbose=args.verbose)
+            final_out = torch_mha(x, W_q, b_q, W_k, b_k, W_v, b_v, W_o, b_o, H, verbose=args.verbose)
             elapsed_ms = (time.perf_counter() - start) * 1000
             print(f"⏱️  Time taken: {elapsed_ms:.2f} ms")

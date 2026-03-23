@@ -40,6 +40,7 @@ set(LAYER_SOURCES
     src/memory.cpp
     src/utils/loader.cpp # Assuming you put the loader helper here
     src/tokenizer.cpp
+    src/pipeline/pipeline_engine.cpp
 )
 
 # --- Define the Shared Library ---
@@ -95,6 +96,10 @@ add_inference_test(test_addition tests/test_addition.cu)
 add_inference_test(test_attention tests/test_attention.cu)
 add_inference_test(test_feed_forward tests/test_feed_forward.cu)
 add_inference_test(test_transformer tests/test_transformer.cu)
+
+# --- Benchmarks ---
+add_executable(bench_performance tests/bench_performance.cu)
+target_link_libraries(bench_performance PRIVATE inference_lib)
 
 message(STATUS "Configured for GTX 1050 Ti (Compute Capability 6.1)")
 message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")

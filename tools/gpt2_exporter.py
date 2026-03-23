@@ -44,13 +44,21 @@ def export_weights():
         qkv_w = block.attn.c_attn.weight # [768, 2304]
         q_w, k_w, v_w = torch.split(qkv_w, 768, dim=1)
         
+        # Split the bias [3*Dim] -> [Dim], [Dim], [Dim]
+        qkv_b = block.attn.c_attn.bias
+        q_b, k_b, v_b = torch.split(qkv_b, 768, dim=0)
+        
         write_tensor(q_w)
+        write_tensor(q_b)
         write_tensor(k_w)
+        write_tensor(k_b)
         write_tensor(v_w)
+        write_tensor(v_b)
         
         # Attention Output Projection
         write_tensor(block.attn.c_proj.weight) 
-
+        write_tensor(block.attn.c_proj.bias)
+        
         # C. FFN Norm (Gamma, Beta)
         write_tensor(block.ln_2.weight)
         write_tensor(block.ln_2.bias)

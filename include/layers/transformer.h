@@ -103,6 +103,12 @@ public:
     void load_embeddings(const float* h_token_embed, const float* h_pos_embed);
     void load_head(const float* h_lm_head);
 
+    // Getters
+    int get_vocab_size() const { return vocab_size; }
+    int get_max_seq_len() const { return max_seq_len; }
+    int get_d_model() const { return d_model; }
+
+
 private:
     int d_model;
     int max_seq_len;

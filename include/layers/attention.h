@@ -13,7 +13,8 @@ public:
 
     // helper function for testing
     // during end to end run weights will be loaded from .bin
-    void load_weights(const float* h_W_q, const float* h_W_k, const float* h_W_v, const float* h_W_o);
+    void load_weights(const float* h_W_q, const float* h_W_k, const float* h_W_v, const float* h_W_o,
+                      const float* h_b_q, const float* h_b_k, const float* h_b_v, const float* h_b_o);
 
 private:
 
@@ -27,6 +28,7 @@ private:
 
     // views into weights memory arena, will be same across users
     float *d_W_q, *d_W_k, *d_W_v, *d_W_o;
+    float *d_b_q, *d_b_k, *d_b_v, *d_b_o;
     // float *d_Q, *d_K, *d_V; removed these cause these are owned by arena, idea is same attention object we can use to do simultaneous inferences 
     // float *d_K_transpose, *d_attention;
     // float *d_attention_heads_output;

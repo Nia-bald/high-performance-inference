@@ -12,19 +12,20 @@ def layer_norm(x, gamma, beta, eps=1e-5):
     return gamma * (x - mean) / torch.sqrt(var + eps) + beta
 
 
-def self_attention(x, W_q, W_k, W_v, W_o, num_heads):
+def self_attention(x, W_q, b_q, W_k, b_k, W_v, b_v, W_o, b_o, num_heads):
     """
     Multi-head causal self-attention (matching the CUDA SelfAttention::forward).
     
     x:      (B, T, D)
     W_q/k/v/o:  (D, D)
+    b_q/k/v/o:  (D,)
     """
     B, T, D = x.shape
     head_dim = D // num_heads
 
-    Q = x @ W_q   # (B, T, D)
-    K = x @ W_k
-    V = x @ W_v
+    Q = (x @ W_q) + b_q   # (B, T, D)
+    K = (x @ W_k) + b_k
+    V = (x @ W_v) + b_v
 
     # Reshape to (B, H, T, head_dim)
     Q = Q.view(B, T, num_heads, head_dim).transpose(1, 2)
@@ -45,7 +46,7 @@ def self_attention(x, W_q, W_k, W_v, W_o, num_heads):
     context = context.transpose(1, 2).contiguous().view(B, T, D)
 
     # Output projection
-    return context @ W_o
+    return (context @ W_o) + b_o
 
 
 def feed_forward(x, W_up, b_up, W_down, b_down):
@@ -57,7 +58,7 @@ def feed_forward(x, W_up, b_up, W_down, b_down):
 
 
 def transformer_block(x, attn_norm_gamma, attn_norm_beta,
-                      W_q, W_k, W_v, W_o,
+                      W_q, b_q, W_k, b_k, W_v, b_v, W_o, b_o,
                       ffn_norm_gamma, ffn_norm_beta,
                       W_up, b_up, W_down, b_down,
                       num_heads):
@@ -69,7 +70,7 @@ def transformer_block(x, attn_norm_gamma, attn_norm_beta,
     """
     # Attention path
     norm1 = layer_norm(x, attn_norm_gamma, attn_norm_beta)
-    attn_out = self_attention(norm1, W_q, W_k, W_v, W_o, num_heads)
+    attn_out = self_attention(norm1, W_q, b_q, W_k, b_k, W_v, b_v, W_o, b_o, num_heads)
     res1 = x + attn_out
 
     # FFN path
@@ -104,7 +105,7 @@ def transformer_forward(token_ids, token_embed, pos_embed,
         x = transformer_block(
             x,
             lw['attn_norm_gamma'], lw['attn_norm_beta'],
-            lw['W_q'], lw['W_k'], lw['W_v'], lw['W_o'],
+            lw['W_q'], lw['b_q'], lw['W_k'], lw['b_k'], lw['W_v'], lw['b_v'], lw['W_o'], lw['b_o'],
             lw['ffn_norm_gamma'], lw['ffn_norm_beta'],
             lw['W_up'], lw['b_up'], lw['W_down'], lw['b_down'],
             num_heads
@@ -155,9 +156,13 @@ def generate_mode(vocab_size, max_seq_len, d_model, num_heads, num_layers, d_ff,
             lw['attn_norm_beta'] = torch.zeros(d_model, dtype=torch.float32)
             # Attention projections
             lw['W_q'] = torch.randn(d_model, d_model, dtype=torch.float32) * 0.1
+            lw['b_q'] = torch.randn(d_model, dtype=torch.float32) * 0.1
             lw['W_k'] = torch.randn(d_model, d_model, dtype=torch.float32) * 0.1
+            lw['b_k'] = torch.randn(d_model, dtype=torch.float32) * 0.1
             lw['W_v'] = torch.randn(d_model, d_model, dtype=torch.float32) * 0.1
+            lw['b_v'] = torch.randn(d_model, dtype=torch.float32) * 0.1
             lw['W_o'] = torch.randn(d_model, d_model, dtype=torch.float32) * 0.1
+            lw['b_o'] = torch.randn(d_model, dtype=torch.float32) * 0.1
             # FFN norm
             lw['ffn_norm_gamma'] = torch.ones(d_model, dtype=torch.float32)
             lw['ffn_norm_beta'] = torch.zeros(d_model, dtype=torch.float32)
@@ -197,14 +202,18 @@ def generate_mode(vocab_size, max_seq_len, d_model, num_heads, num_layers, d_ff,
         # LINE 4: pos_embedding_table [MaxSeq, d_model]
         print(_floats_to_line(pos_embed))
 
-        # Per layer (12 lines each):
+        # Per layer (16 lines each):
         for lw in layer_weights:
             print(_floats_to_line(lw['attn_norm_gamma']))   # attn_norm gamma
             print(_floats_to_line(lw['attn_norm_beta']))    # attn_norm beta
             print(_floats_to_line(lw['W_q']))               # W_q
+            print(_floats_to_line(lw['b_q']))               # b_q
             print(_floats_to_line(lw['W_k']))               # W_k
+            print(_floats_to_line(lw['b_k']))               # b_k
             print(_floats_to_line(lw['W_v']))               # W_v
+            print(_floats_to_line(lw['b_v']))               # b_v
             print(_floats_to_line(lw['W_o']))               # W_o
+            print(_floats_to_line(lw['b_o']))               # b_o
             print(_floats_to_line(lw['ffn_norm_gamma']))    # ffn_norm gamma
             print(_floats_to_line(lw['ffn_norm_beta']))     # ffn_norm beta
             print(_floats_to_line(lw['W_up']))              # W_up
@@ -254,8 +263,10 @@ if __name__ == "__main__":
             for _ in range(L):
                 lw = {
                     'attn_norm_gamma': torch.ones(D), 'attn_norm_beta': torch.zeros(D),
-                    'W_q': torch.randn(D, D) * 0.1, 'W_k': torch.randn(D, D) * 0.1,
-                    'W_v': torch.randn(D, D) * 0.1, 'W_o': torch.randn(D, D) * 0.1,
+                    'W_q': torch.randn(D, D) * 0.1, 'b_q': torch.randn(D) * 0.1,
+                    'W_k': torch.randn(D, D) * 0.1, 'b_k': torch.randn(D) * 0.1,
+                    'W_v': torch.randn(D, D) * 0.1, 'b_v': torch.randn(D) * 0.1,
+                    'W_o': torch.randn(D, D) * 0.1, 'b_o': torch.randn(D) * 0.1,
                     'ffn_norm_gamma': torch.ones(D), 'ffn_norm_beta': torch.zeros(D),
                     'W_up': torch.randn(D, FF) * 0.1, 'b_up': torch.randn(FF) * 0.1,
                     'W_down': torch.randn(FF, D) * 0.1, 'b_down': torch.randn(D) * 0.1,

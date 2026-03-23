@@ -41,14 +41,18 @@ void load_gpt2_weights(Transformer& gpt, const std::string& path,
         // B. Attn Weights
         // Q
         read_floats(f, buf, d_model * d_model); auto wq = buf;
+        read_floats(f, buf, d_model);           auto bq = buf;
         // K
         read_floats(f, buf, d_model * d_model); auto wk = buf;
+        read_floats(f, buf, d_model);           auto bk = buf;
         // V
         read_floats(f, buf, d_model * d_model); auto wv = buf;
+        read_floats(f, buf, d_model);           auto bv = buf;
         // O
         read_floats(f, buf, d_model * d_model); auto wo = buf;
+        read_floats(f, buf, d_model);           auto bo = buf;
         
-        block->get_attention().load_weights(wq.data(), wk.data(), wv.data(), wo.data());
+        block->get_attention().load_weights(wq.data(), wk.data(), wv.data(), wo.data(), bq.data(), bk.data(), bv.data(), bo.data());
 
         // C. FFN Norm
         read_floats(f, buf, d_model); auto gamma2 = buf;

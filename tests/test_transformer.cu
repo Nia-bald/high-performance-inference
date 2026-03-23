@@ -53,7 +53,7 @@ static int parse_ints(const std::string& line, std::vector<int>& out) {
 struct LayerWeights {
     std::vector<float> attn_norm_gamma;
     std::vector<float> attn_norm_beta;
-    std::vector<float> W_q, W_k, W_v, W_o;
+    std::vector<float> W_q, b_q, W_k, b_k, W_v, b_v, W_o, b_o;
     std::vector<float> ffn_norm_gamma;
     std::vector<float> ffn_norm_beta;
     std::vector<float> W_up, b_up, W_down, b_down;
@@ -148,9 +148,9 @@ static int run_python_reference(
     }
 
     // Expected lines: 1 (time) + 1 (token_ids) + 1 (token_embed) + 1 (pos_embed)
-    //                 + num_layers * 12 (per-layer weights)
+    //                 + num_layers * 16 (per-layer weights)
     //                 + 2 (final norm gamma/beta) + 1 (lm_head) + 1 (expected logits)
-    int expected_lines = 4 + num_layers * 12 + 2 + 1 + 1;
+    int expected_lines = 4 + num_layers * 16 + 2 + 1 + 1;
     if ((int)lines.size() < expected_lines) {
         std::cerr << "ERROR: Expected " << expected_lines << " output lines from Python, got " 
                   << lines.size() << std::endl;
@@ -171,15 +171,19 @@ static int run_python_reference(
     // Line 3: pos_embedding_table
     parse_floats(lines[line_idx++], h_pos_embed);
 
-    // Per-layer weights (12 lines each)
+    // Per-layer weights (16 lines each)
     layer_weights.resize(num_layers);
     for (int i = 0; i < num_layers; ++i) {
         parse_floats(lines[line_idx++], layer_weights[i].attn_norm_gamma);
         parse_floats(lines[line_idx++], layer_weights[i].attn_norm_beta);
         parse_floats(lines[line_idx++], layer_weights[i].W_q);
+        parse_floats(lines[line_idx++], layer_weights[i].b_q);
         parse_floats(lines[line_idx++], layer_weights[i].W_k);
+        parse_floats(lines[line_idx++], layer_weights[i].b_k);
         parse_floats(lines[line_idx++], layer_weights[i].W_v);
+        parse_floats(lines[line_idx++], layer_weights[i].b_v);
         parse_floats(lines[line_idx++], layer_weights[i].W_o);
+        parse_floats(lines[line_idx++], layer_weights[i].b_o);
         parse_floats(lines[line_idx++], layer_weights[i].ffn_norm_gamma);
         parse_floats(lines[line_idx++], layer_weights[i].ffn_norm_beta);
         parse_floats(lines[line_idx++], layer_weights[i].W_up);
@@ -214,9 +218,13 @@ static int run_python_reference(
         if ((int)lw.attn_norm_gamma.size() != d_model) { std::cerr << "layer " << i << " attn_norm_gamma size mismatch\n"; return -1; }
         if ((int)lw.attn_norm_beta.size()  != d_model) { std::cerr << "layer " << i << " attn_norm_beta size mismatch\n";  return -1; }
         if ((int)lw.W_q.size()  != DD) { std::cerr << "layer " << i << " W_q size mismatch\n";  return -1; }
+        if ((int)lw.b_q.size()  != d_model) { std::cerr << "layer " << i << " b_q size mismatch\n";  return -1; }
         if ((int)lw.W_k.size()  != DD) { std::cerr << "layer " << i << " W_k size mismatch\n";  return -1; }
+        if ((int)lw.b_k.size()  != d_model) { std::cerr << "layer " << i << " b_k size mismatch\n";  return -1; }
         if ((int)lw.W_v.size()  != DD) { std::cerr << "layer " << i << " W_v size mismatch\n";  return -1; }
+        if ((int)lw.b_v.size()  != d_model) { std::cerr << "layer " << i << " b_v size mismatch\n";  return -1; }
         if ((int)lw.W_o.size()  != DD) { std::cerr << "layer " << i << " W_o size mismatch\n";  return -1; }
+        if ((int)lw.b_o.size()  != d_model) { std::cerr << "layer " << i << " b_o size mismatch\n";  return -1; }
         if ((int)lw.ffn_norm_gamma.size() != d_model) { std::cerr << "layer " << i << " ffn_norm_gamma size mismatch\n"; return -1; }
         if ((int)lw.ffn_norm_beta.size()  != d_model) { std::cerr << "layer " << i << " ffn_norm_beta size mismatch\n";  return -1; }
         if ((int)lw.W_up.size()    != DF)      { std::cerr << "layer " << i << " W_up size mismatch\n";   return -1; }
@@ -296,7 +304,8 @@ int main() {
         block->get_attn_norm().load_weights(lw.attn_norm_gamma.data(), lw.attn_norm_beta.data());
 
         // Attention projections
-        block->get_attention().load_weights(lw.W_q.data(), lw.W_k.data(), lw.W_v.data(), lw.W_o.data());
+        block->get_attention().load_weights(lw.W_q.data(), lw.W_k.data(), lw.W_v.data(), lw.W_o.data(),
+                                            lw.b_q.data(), lw.b_k.data(), lw.b_v.data(), lw.b_o.data());
 
         // FFN norm
         block->get_ffn_norm().load_weights(lw.ffn_norm_gamma.data(), lw.ffn_norm_beta.data());

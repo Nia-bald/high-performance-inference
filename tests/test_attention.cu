@@ -46,9 +46,13 @@ static int run_python_reference(
         double& python_time_ms,
         std::vector<float>& h_input,
         std::vector<float>& h_W_q,
+        std::vector<float>& h_b_q,
         std::vector<float>& h_W_k,
+        std::vector<float>& h_b_k,
         std::vector<float>& h_W_v,
+        std::vector<float>& h_b_v,
         std::vector<float>& h_W_o,
+        std::vector<float>& h_b_o,
         std::vector<float>& h_expected) {
 
     // Build the command – look for the script relative to the executable or
@@ -128,30 +132,38 @@ static int run_python_reference(
         return -1;
     }
 
-    if (lines.size() < 7) {
-        std::cerr << "ERROR: Expected 7 output lines from Python, got " << lines.size() << std::endl;
+    if (lines.size() < 11) {
+        std::cerr << "ERROR: Expected 11 output lines from Python, got " << lines.size() << std::endl;
         return -1;
     }
 
     // Line 0: python_time_ms
     python_time_ms = std::stod(lines[0]);
 
-    // Lines 1-6: input, W_q, W_k, W_v, W_o, expected output
+    // Lines 1-10: input, W_q, b_q, W_k, b_k, W_v, b_v, W_o, b_o, expected output
     parse_floats(lines[1], h_input);
     parse_floats(lines[2], h_W_q);
-    parse_floats(lines[3], h_W_k);
-    parse_floats(lines[4], h_W_v);
-    parse_floats(lines[5], h_W_o);
-    parse_floats(lines[6], h_expected);
+    parse_floats(lines[3], h_b_q);
+    parse_floats(lines[4], h_W_k);
+    parse_floats(lines[5], h_b_k);
+    parse_floats(lines[6], h_W_v);
+    parse_floats(lines[7], h_b_v);
+    parse_floats(lines[8], h_W_o);
+    parse_floats(lines[9], h_b_o);
+    parse_floats(lines[10], h_expected);
 
     // Sanity checks
     int BTD = batch_size * seq_len * d_model;
     int DD  = d_model * d_model;
     if ((int)h_input.size()    != BTD) { std::cerr << "input size mismatch\n";    return -1; }
     if ((int)h_W_q.size()      != DD)  { std::cerr << "W_q size mismatch\n";      return -1; }
+    if ((int)h_b_q.size()      != d_model)  { std::cerr << "b_q size mismatch\n";      return -1; }
     if ((int)h_W_k.size()      != DD)  { std::cerr << "W_k size mismatch\n";      return -1; }
+    if ((int)h_b_k.size()      != d_model)  { std::cerr << "b_k size mismatch\n";      return -1; }
     if ((int)h_W_v.size()      != DD)  { std::cerr << "W_v size mismatch\n";      return -1; }
+    if ((int)h_b_v.size()      != d_model)  { std::cerr << "b_v size mismatch\n";      return -1; }
     if ((int)h_W_o.size()      != DD)  { std::cerr << "W_o size mismatch\n";      return -1; }
+    if ((int)h_b_o.size()      != d_model)  { std::cerr << "b_o size mismatch\n";      return -1; }
     if ((int)h_expected.size() != BTD) { std::cerr << "expected size mismatch\n"; return -1; }
 
     return 0;
@@ -174,11 +186,11 @@ int main() {
 
     // ---- Step 1: Get Python ground truth (random weights + expected output) ----
     double python_time_ms = 0.0;
-    std::vector<float> h_input, h_W_q, h_W_k, h_W_v, h_W_o, h_expected;
+    std::vector<float> h_input, h_W_q, h_b_q, h_W_k, h_b_k, h_W_v, h_b_v, h_W_o, h_b_o, h_expected;
 
     if (run_python_reference(D_MODEL, NUM_HEADS, BATCH_SIZE, SEQ_LEN, SEED,
                              python_time_ms,
-                             h_input, h_W_q, h_W_k, h_W_v, h_W_o, h_expected) != 0) {
+                             h_input, h_W_q, h_b_q, h_W_k, h_b_k, h_W_v, h_b_v, h_W_o, h_b_o, h_expected) != 0) {
         std::cerr << ">>> FAIL: Could not get Python reference output." << std::endl;
         return -1;
     }
@@ -199,7 +211,7 @@ int main() {
                             D_MODEL / NUM_HEADS, D_MODEL / NUM_HEADS);
 
     // Load the randomly-generated weight matrices
-    attention.load_weights(h_W_q.data(), h_W_k.data(), h_W_v.data(), h_W_o.data());
+    attention.load_weights(h_W_q.data(), h_W_k.data(), h_W_v.data(), h_W_o.data(), h_b_q.data(), h_b_k.data(), h_b_v.data(), h_b_o.data());
 
     // Allocate input and output on GPU
     float* d_input  = inference_arena.allocate<float>(h_input.size());
