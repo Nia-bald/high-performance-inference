@@ -185,3 +185,27 @@ cudaMemcpy(d_b_v, h_b_v, bias_size, cudaMemcpyHostToDevice);
 cudaMemcpy(d_W_o, h_W_o, matrix_size_o, cudaMemcpyHostToDevice);
 cudaMemcpy(d_b_o, h_b_o, bias_size_o, cudaMemcpyHostToDevice);
 }
+
+size_t SelfAttention::estimate_weight_memory(int d_model, int num_heads, int qk_dim, int v_dim) {
+    int head_dim_qk = (qk_dim == 0) ? d_model / num_heads : qk_dim;
+    int head_dim_v = (v_dim == 0) ? d_model / num_heads : v_dim;
+    int total_qk_dim = head_dim_qk * num_heads;
+    int total_v_dim = head_dim_v * num_heads;
+
+    size_t qk_w = d_model * total_qk_dim + total_qk_dim; // W_q, b_q
+    size_t k_w  = d_model * total_qk_dim + total_qk_dim; // W_k, b_k
+    size_t v_w  = d_model * total_v_dim + total_v_dim;   // W_v, b_v
+    size_t o_w  = total_v_dim * d_model + d_model;       // W_o, b_o
+    return (qk_w + k_w + v_w + o_w) * sizeof(float);
+}
+
+size_t SelfAttention::estimate_inference_scratch(int max_batch_size, int max_seq_len, int d_model, int num_heads, int qk_dim, int v_dim) {
+    int head_dim_qk = (qk_dim == 0) ? d_model / num_heads : qk_dim;
+    int total_qk_dim = head_dim_qk * num_heads;
+
+    size_t qk_proj_size = max_batch_size * max_seq_len * total_qk_dim;
+    size_t attention_size = max_seq_len * max_seq_len * max_batch_size * num_heads;
+
+    // d_Q, d_K, d_K_transpose, d_V, d_A_mult_V are qk_proj_size
+    return 5 * qk_proj_size * sizeof(float) + attention_size * sizeof(float);
+}

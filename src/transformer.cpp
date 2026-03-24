@@ -93,3 +93,24 @@ void Transformer::load_embeddings(const float* h_token, const float* h_pos) {
 void Transformer::load_head(const float* h_head) {
     cudaMemcpy(d_lm_head, h_head, d_model * vocab_size * sizeof(float), cudaMemcpyHostToDevice);
 }
+
+size_t Transformer::estimate_weight_memory(int vocab_size, int max_seq_len, int d_model, int num_heads, int num_layers, int d_ff) {
+    size_t total = 0;
+    total += vocab_size * d_model * sizeof(float);  // d_token_embedding_table
+    total += max_seq_len * d_model * sizeof(float); // d_pos_embedding_table
+    total += d_model * vocab_size * sizeof(float);  // d_lm_head
+
+    total += num_layers * TransformerBlock::estimate_weight_memory(d_model, num_heads, d_ff);
+    total += LayerNorm::estimate_weight_memory(d_model); // final_norm
+    return total;
+}
+
+size_t Transformer::estimate_inference_scratch(int max_batch_size, int max_seq_len, int d_model, int num_heads, int num_layers, int d_ff) {
+    size_t state_size = max_batch_size * max_seq_len * d_model;
+    size_t total = 0;
+    total += 2 * state_size * sizeof(float); // d_buffer_1, d_buffer_2
+    
+    // Accumulate for all layers since we don't reset arena inside Transformer::forward
+    total += num_layers * TransformerBlock::estimate_inference_scratch(max_batch_size, max_seq_len, d_model, num_heads, d_ff);
+    return total;
+}

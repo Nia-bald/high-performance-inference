@@ -15,6 +15,10 @@ public:
     // input: [Batch, Seq, d_model]
     void forward(const float* d_input, float* d_output, int batch_size, int seq_len, cudaStream_t stream);
 
+    // Static Estimators
+    static size_t estimate_weight_memory(int d_model);
+    static size_t estimate_inference_scratch();
+
     // Helper to load weights from host
     void load_weights(const float* h_gamma, const float* h_beta);
 
@@ -36,6 +40,10 @@ public:
 
     void forward(const float* d_input, float* d_output, GPUMemoryArena& inference_arena, 
                  int batch_size, int seq_len, cudaStream_t stream);
+
+    // Static Estimators
+    static size_t estimate_weight_memory(int d_model, int d_ff);
+    static size_t estimate_inference_scratch(int max_batch_size, int max_seq_len, int d_ff);
 
     void load_weights(const float* h_W_up, const float* h_b_up, 
                       const float* h_W_down, const float* h_b_down);
@@ -62,8 +70,11 @@ public:
     TransformerBlock(int d_model, int num_heads, int d_ff, 
                      GPUMemoryArena& weights_arena);
     ~TransformerBlock() = default;
-
     void forward(int current_batch_size, int current_seq_len, const float* d_input, float* d_output, GPUMemoryArena& inference_arena, cudaStream_t stream);
+
+    // Static Estimators
+    static size_t estimate_weight_memory(int d_model, int num_heads, int d_ff);
+    static size_t estimate_inference_scratch(int max_batch_size, int max_seq_len, int d_model, int num_heads, int d_ff);
 
     // Helper to access sub-layers for weight loading
     LayerNorm& get_attn_norm() { return attention_norm; }
@@ -94,6 +105,10 @@ public:
     // Input: d_token_ids [Batch, Seq] (Integers)
     // Output: d_logits [Batch, Seq, Vocab] (Floats)
     void forward(const int* d_token_ids, float* d_logits, int current_batch_size, int current_seq_len, GPUMemoryArena& inference_arena, cudaStream_t stream);
+
+    // Static Estimators
+    static size_t estimate_weight_memory(int vocab_size, int max_seq_len, int d_model, int num_heads, int num_layers, int d_ff);
+    static size_t estimate_inference_scratch(int max_batch_size, int max_seq_len, int d_model, int num_heads, int num_layers, int d_ff);
 
     // Accessors for weight loading
     TransformerBlock* get_block(int i) { return layers[i]; }

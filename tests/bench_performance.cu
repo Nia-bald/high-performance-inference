@@ -13,6 +13,7 @@
 #include "memory.h"
 #include "kernels.cuh"
 #include "pipeline/pipeline_engine.hpp"
+#include "batch_executor_orchestrator.hpp"
 #include "json.hpp"
 
 namespace fs = std::filesystem;
@@ -192,25 +193,24 @@ static std::vector<PipelineBenchResult> benchmarkPipeline(const std::vector<Prom
     std::cout << "  BENCHMARK 2: Full Generation Pipeline \n";
     std::cout << "========================================\n\n";
 
-    size_t weight_mem = (size_t)(700 * 1024 * 1024);
-    GPUMemoryArena weight_arena(weight_mem);
+    ModelConfig config;
+    config.vocab_size = vocab_size;
+    config.max_seq_len = max_seq_len;
+    config.d_model = d_model;
+    config.num_heads = num_heads;
+    config.num_layers = num_layers;
+    config.d_ff = d_ff;
 
-    size_t inf_mem = (size_t)(800 * 1024 * 1024);
-    GPUMemoryArena inf_arena(inf_mem);
-
-    std::cout << ">>> Initializing Transformer Engine..." << std::endl;
-    Transformer gpt(vocab_size, max_seq_len, d_model, num_heads, num_layers, d_ff, weight_arena);
+    std::cout << ">>> Initializing Transformer Engine with Orchestrator..." << std::endl;
+    BatchExecutorOrchestrator orchestrator(
+        config, 
+        "/home/niare/Projects/transformer_inference_engine/vocab.json", 
+        "/home/niare/Projects/transformer_inference_engine/merges.txt",
+        1 // max_batch_size
+    );
     
     std::cout << ">>> Loading Weights for accurate generation..." << std::endl;
-    load_gpt2_weights(gpt, "/home/niare/Projects/transformer_inference_engine/gpt2_weights.bin", num_layers, d_model, vocab_size, max_seq_len, d_ff);
-
-    GPT2Tokenizer tokenizer;
-    tokenizer.load("/home/niare/Projects/transformer_inference_engine/vocab.json", "/home/niare/Projects/transformer_inference_engine/merges.txt");
-
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
-
-    pipeline::PipelineEngine engine(gpt, tokenizer, inf_arena, stream);
+    orchestrator.load_weights("/home/niare/Projects/transformer_inference_engine/gpt2_weights.bin");
 
     std::vector<PipelineBenchResult> results;
 
@@ -221,7 +221,8 @@ static std::vector<PipelineBenchResult> benchmarkPipeline(const std::vector<Prom
         std::cout << "  Running prompt '" << p.filename << "' (Length: " << p.input_ids.size() << ") ..." << std::flush;
         
         // Single benchmark run is sufficient for generative models
-        auto result = engine.generate(p.input_ids, gen_cfg);
+        auto future_result = orchestrator.submit_batch(p.input_ids, gen_cfg, StrategyType::STANDARD);
+        auto result = future_result.get();
 
         PipelineBenchResult r;
         r.batch_size = 1;
@@ -242,7 +243,6 @@ static std::vector<PipelineBenchResult> benchmarkPipeline(const std::vector<Prom
         out_file << "Prompt:\n" << p.prompt_text << "\n\nGenerated:\n" << result.decoded_text << "\n";
     }
 
-    cudaStreamDestroy(stream);
     return results;
 }
 
