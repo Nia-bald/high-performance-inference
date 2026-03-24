@@ -1,6 +1,6 @@
 #pragma once
 
-#include "pipeline/metrics.hpp"
+#include "pipeline/execution_strategy.hpp"
 #include "transformer.h"
 #include "tokenizer.h"
 #include "memory.h"
@@ -8,13 +8,17 @@
 
 namespace pipeline {
 
-class PipelineEngine {
+class PipelineEngine : public ExecutionStrategy {
 public:
     PipelineEngine(Transformer& model, GPT2Tokenizer& tokenizer, GPUMemoryArena& inference_arena, cudaStream_t stream = 0);
 
-    // Main entry point for generating tokens.
-    // Handles memory updates, loops, and accurately times execution.
-    GenerationResult generate(const std::vector<int>& input_ids, const GenerationConfig& config);
+protected:
+    // Strategy hooks — pure execution logic, no timing, no metric math.
+    void run_prefill(GenerationResult& result, const GenerationConfig& config) override;
+    void run_decode(GenerationResult& result, const GenerationConfig& config) override;
+    void finalize(GenerationResult& result) override;
+
+    cudaStream_t get_stream() const override { return stream; }
 
 private:
     Transformer& model;
@@ -27,10 +31,6 @@ private:
     float* d_logits;
     int* d_next_token;
     size_t persistent_offset;
-
-    // Helper to time a lambda execution via CUDA events
-    template <typename F>
-    double time_cuda_execution(F&& func);
 };
 
 } // namespace pipeline
