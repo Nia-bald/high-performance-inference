@@ -1,5 +1,6 @@
 #pragma once
 
+#include "pipeline/execution_strategy.hpp"
 #include "pipeline/pipeline_engine.hpp"
 #include "memory.h"
 #include <vector>
@@ -36,7 +37,7 @@ private:
     cudaStream_t stream;
     std::unique_ptr<GPUMemoryArena> inference_arena;
     
-    // The specific strategy
+    // The specific strategy — stored as base class pointer
     StrategyType strategy_type;
-    std::unique_ptr<pipeline::PipelineEngine> strategy;
+    std::unique_ptr<pipeline::ExecutionStrategy> strategy;
 };
