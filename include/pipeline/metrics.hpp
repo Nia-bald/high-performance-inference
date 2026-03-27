@@ -18,12 +18,17 @@ struct GenerationMetrics {
 };
 
 struct GenerationResult {
-    std::vector<int> output_sequence;
-    std::string decoded_text;
+    // Batched output: one sequence per item in the batch
+    std::vector<std::vector<int>> output_sequences;
+    std::vector<std::string> decoded_texts;
     GenerationMetrics metrics;
+
+    // Convenience: number of sequences in the batch
+    int batch_size() const { return output_sequences.size(); }
 };
 
 struct GenerationConfig {
+    int batch_size = 1;
     int max_new_tokens = 20;
     // We can add temperature, top_k, top_p etc. here later
 };

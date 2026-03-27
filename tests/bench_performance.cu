@@ -14,6 +14,7 @@
 #include "kernels.cuh"
 #include "pipeline/pipeline_engine.hpp"
 #include "batch_executor_orchestrator.hpp"
+#include "benchmark_config.hpp"
 #include "json.hpp"
 
 namespace fs = std::filesystem;
@@ -188,9 +189,16 @@ struct PipelineBenchResult {
 // Load real weights definition
 void load_gpt2_weights(Transformer& gpt, const std::string& path, int n_layers, int d_model, int vocab_size, int max_seq, int d_ff);
 
-static std::vector<PipelineBenchResult> benchmarkPipeline(const std::vector<PromptConfig>& prompts, const std::string& output_dir, int vocab_size, int max_seq_len, int d_model, int num_heads, int num_layers, int d_ff) {
+static std::vector<PipelineBenchResult> benchmarkPipeline(
+    const std::vector<PromptConfig>& prompts, 
+    const benchmark::ScenarioConfig& scenario,
+    const std::string& output_dir, 
+    int vocab_size, int max_seq_len, int d_model, int num_heads, int num_layers, int d_ff) {
+    
     std::cout << "\n========================================\n";
     std::cout << "  BENCHMARK 2: Full Generation Pipeline \n";
+    std::cout << "  Scenario: batch_size=" << scenario.batch_size 
+              << ", max_new_tokens=" << scenario.max_new_tokens << "\n";
     std::cout << "========================================\n\n";
 
     ModelConfig config;
@@ -206,44 +214,73 @@ static std::vector<PipelineBenchResult> benchmarkPipeline(const std::vector<Prom
         config, 
         "/home/niare/Projects/transformer_inference_engine/vocab.json", 
         "/home/niare/Projects/transformer_inference_engine/merges.txt",
-        1 // max_batch_size
+        scenario.batch_size
     );
     
     std::cout << ">>> Loading Weights for accurate generation..." << std::endl;
     orchestrator.load_weights("/home/niare/Projects/transformer_inference_engine/gpt2_weights.bin");
 
-    std::vector<PipelineBenchResult> results;
+    // Build GenerationConfig from the scenario
+    pipeline::GenerationConfig gen_cfg = benchmark::BenchmarkRunConfig::to_generation_config(scenario);
 
-    for (const auto& p : prompts) {
-        pipeline::GenerationConfig gen_cfg;
-        gen_cfg.max_new_tokens = p.max_new_tokens;
+    // Build the batch: take all prompts, cycle if fewer than batch_size
+    std::vector<std::vector<int>> batch_sequences;
+    std::vector<std::string> batch_filenames;
+    std::vector<std::string> batch_prompt_texts;
 
-        std::cout << "  Running prompt '" << p.filename << "' (Length: " << p.input_ids.size() << ") ..." << std::flush;
-        
-        // Single benchmark run is sufficient for generative models
-        auto future_result = orchestrator.submit_batch(p.input_ids, gen_cfg, StrategyType::STANDARD);
-        auto result = future_result.get();
-
-        PipelineBenchResult r;
-        r.batch_size = 1;
-        r.seq_len = p.input_ids.size();
-        r.max_new_tokens = p.max_new_tokens;
-        r.prefill_ms = result.metrics.prefill_time_ms;
-        r.decode_ms = result.metrics.decode_time_ms;
-        r.total_ms = result.metrics.total_time_ms;
-        r.prefill_tok_sec = result.metrics.prefill_tokens_per_sec;
-        r.decode_tok_sec = result.metrics.decode_tokens_per_sec;
-
-        std::cout << " Done. Prefill Tok/s: " << r.prefill_tok_sec << " | Decode Tok/s: " << r.decode_tok_sec << "\n";
-        results.push_back(r);
-
-        // Save generated text
-        std::string out_path = output_dir + "/" + p.filename + ".out.txt";
-        std::ofstream out_file(out_path);
-        out_file << "Prompt:\n" << p.prompt_text << "\n\nGenerated:\n" << result.decoded_text << "\n";
+    for (int i = 0; i < scenario.batch_size; ++i) {
+        const auto& p = prompts[i % prompts.size()];
+        batch_sequences.push_back(p.input_ids);
+        batch_filenames.push_back(p.filename);
+        batch_prompt_texts.push_back(p.prompt_text);
     }
 
-    return results;
+    std::cout << "  Batching " << batch_sequences.size() << " sequences";
+    if (scenario.batch_size > (int)prompts.size()) {
+        std::cout << " (" << prompts.size() << " unique prompts, cycled to fill batch)";
+    }
+    std::cout << "\n";
+    for (int i = 0; i < (int)batch_sequences.size(); ++i) {
+        std::cout << "    [" << i << "] '" << batch_filenames[i] << "' (len=" << batch_sequences[i].size() << ")\n";
+    }
+    std::cout << std::flush;
+
+    // Submit the entire batch as one
+    auto future_result = orchestrator.submit_batch(batch_sequences, gen_cfg, StrategyType::STANDARD);
+    auto result = future_result.get();
+
+    std::cout << "  Done.\n";
+
+    // Record result
+    // Find max prompt len for reporting
+    int max_prompt_len = 0;
+    for (const auto& seq : batch_sequences) {
+        max_prompt_len = std::max(max_prompt_len, (int)seq.size());
+    }
+
+    PipelineBenchResult r;
+    r.batch_size = scenario.batch_size;
+    r.seq_len = max_prompt_len;
+    r.max_new_tokens = gen_cfg.max_new_tokens;
+    r.prefill_ms = result.metrics.prefill_time_ms;
+    r.decode_ms = result.metrics.decode_time_ms;
+    r.total_ms = result.metrics.total_time_ms;
+    r.prefill_tok_sec = result.metrics.prefill_tokens_per_sec;
+    r.decode_tok_sec = result.metrics.decode_tokens_per_sec;
+
+    std::cout << "  Prefill Tok/s: " << r.prefill_tok_sec 
+              << " | Decode Tok/s: " << r.decode_tok_sec << "\n";
+
+    // Save generated text for each sequence in the batch
+    for (int b = 0; b < (int)result.decoded_texts.size(); ++b) {
+        std::string suffix = (scenario.batch_size > 1) ? ("_b" + std::to_string(b)) : "";
+        std::string out_path = output_dir + "/" + batch_filenames[b] + suffix + ".out.txt";
+        std::ofstream out_file(out_path);
+        out_file << "Prompt:\n" << batch_prompt_texts[b] 
+                 << "\n\nGenerated:\n" << result.decoded_texts[b] << "\n";
+    }
+
+    return { r };
 }
 
 // ============================================================================
@@ -378,6 +415,16 @@ int main() {
     int NUM_LAYERS = 12;
     int D_FF = 3072;
 
+    // ---- Benchmark Run Configuration ----
+    // Defines the scenarios to sweep. Add more ScenarioConfigs to benchmark
+    // different batch sizes, token counts, etc.
+    benchmark::BenchmarkRunConfig run_config;
+    run_config.scenarios = {
+        { .batch_size = 1, .max_new_tokens = 50 },
+        // Future: { .batch_size = 4, .max_new_tokens = 50 },
+        //         { .batch_size = 1, .max_new_tokens = 100 },
+    };
+
     GPT2Tokenizer temp_tokenizer;
     temp_tokenizer.load("/home/niare/Projects/transformer_inference_engine/vocab.json", "/home/niare/Projects/transformer_inference_engine/merges.txt");
     
@@ -396,7 +443,7 @@ int main() {
                 std::cout << "DEBUG FILE " << p.filename << " tokenized as: ";
                 for (int id : p.input_ids) std::cout << id << " ";
                 std::cout << "\n";
-                p.max_new_tokens = 50; // default benchmark length
+                p.max_new_tokens = 0; // 0 = use scenario default
                 prompts.push_back(p);
             }
         }
@@ -407,25 +454,30 @@ int main() {
         return 1;
     }
 
+    // Build kernel benchmark configs from first scenario's batch_size
+    const auto& default_scenario = run_config.scenarios[0];
     std::vector<BenchmarkConfig> input_configs;
     for (const auto& p : prompts) {
-        // Fallback or truncate max sequence len for naive benchmarking to avoid OOM
         int s_len = std::min((int)p.input_ids.size(), MAX_SEQ_LEN);
-        input_configs.push_back({1, s_len, p.max_new_tokens});
+        input_configs.push_back({default_scenario.batch_size, s_len, default_scenario.max_new_tokens});
     }
 
-    // BENCHMARK 1
+    // BENCHMARK 1: Kernel-level timing
     auto kernel_results = benchmarkKernels(input_configs, D_MODEL, NUM_HEADS, D_FF);
     writeKernelReport(report_dir, timestamp, kernel_results);
 
-    // BENCHMARK 2
-    std::string dataset_output_dir = "/home/niare/Projects/transformer_inference_engine/dataset/output/run_" + timestamp;
-    fs::create_directories(dataset_output_dir);
+    // BENCHMARK 2: Full pipeline — run each scenario
+    std::vector<PipelineBenchResult> all_pipeline_results;
+    for (const auto& scenario : run_config.scenarios) {
+        std::string dataset_output_dir = "/home/niare/Projects/transformer_inference_engine/dataset/output/run_" + timestamp;
+        fs::create_directories(dataset_output_dir);
 
-    auto pipeline_results = benchmarkPipeline(prompts, dataset_output_dir, VOCAB_SIZE, MAX_SEQ_LEN, D_MODEL, NUM_HEADS, NUM_LAYERS, D_FF);
-    writePipelineReport(report_dir, timestamp, pipeline_results);
+        auto pipeline_results = benchmarkPipeline(prompts, scenario, dataset_output_dir, VOCAB_SIZE, MAX_SEQ_LEN, D_MODEL, NUM_HEADS, NUM_LAYERS, D_FF);
+        all_pipeline_results.insert(all_pipeline_results.end(), pipeline_results.begin(), pipeline_results.end());
+    }
+    writePipelineReport(report_dir, timestamp, all_pipeline_results);
 
-    writeSummaryReport(report_dir, timestamp, kernel_results, pipeline_results);
+    writeSummaryReport(report_dir, timestamp, kernel_results, all_pipeline_results);
     
     std::string runs_json_path = "./docs/performance_testing/runs.json";
     updateRunsJson(runs_json_path, timestamp);

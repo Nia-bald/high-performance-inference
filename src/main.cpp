@@ -39,10 +39,10 @@ int main() {
     std::cout << "\n>>> Starting Inference: 'Alan Turing was a' ..." << std::endl;
 
     // --- 4. Run Engine ---
-    auto future_result = orchestrator.submit_batch(input_ids, gen_config, StrategyType::STANDARD);
+    auto future_result = orchestrator.submit_single(input_ids, gen_config, StrategyType::STANDARD);
     auto result = future_result.get();
 
-    std::cout << result.decoded_text << std::flush;
+    std::cout << result.decoded_texts[0] << std::flush;
     std::cout << "\n\n>>> Generation Complete." << std::endl;
 
     // --- 5. Print Metrics ---

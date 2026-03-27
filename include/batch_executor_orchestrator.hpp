@@ -18,8 +18,11 @@ public:
     // Load weights
     void load_weights(const std::string& weights_path);
 
-    // Entry point for clients
-    std::future<pipeline::GenerationResult> submit_batch(const std::vector<int>& prompt_ids, const pipeline::GenerationConfig& gen_config, StrategyType strategy = StrategyType::STANDARD);
+    // Entry point: submit a batch of sequences
+    std::future<pipeline::GenerationResult> submit_batch(const std::vector<std::vector<int>>& input_sequences, const pipeline::GenerationConfig& gen_config, StrategyType strategy = StrategyType::STANDARD);
+
+    // Convenience: submit a single sequence (wraps in a batch of 1)
+    std::future<pipeline::GenerationResult> submit_single(const std::vector<int>& prompt_ids, const pipeline::GenerationConfig& gen_config, StrategyType strategy = StrategyType::STANDARD);
 
     // Access to tokenizer
     GPT2Tokenizer& get_tokenizer() { return tokenizer; }
