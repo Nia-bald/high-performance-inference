@@ -52,10 +52,11 @@ public:
             result.metrics.prompt_tokens / (result.metrics.prefill_time_ms / 1000.0);
 
         double decode_time_sec = result.metrics.decode_time_ms / 1000.0;
-        if (result.metrics.generated_tokens > 1) {
-            // generated_tokens includes the 1 token from prefill
+        size_t batch_size = input_sequences.size();
+        if (result.metrics.generated_tokens > batch_size) {
+            // generated_tokens includes the tokens from prefill
             result.metrics.decode_tokens_per_sec = 
-                (result.metrics.generated_tokens - 1) / decode_time_sec;
+                (result.metrics.generated_tokens - batch_size) / decode_time_sec;
         } else {
             result.metrics.decode_tokens_per_sec = 0.0;
         }
