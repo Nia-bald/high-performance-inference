@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Transformer Inference Performance Dashboard</title>
+  <meta name="description" content="Performance benchmark dashboard for Transformer Inference Engine">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg-primary: #0a0e1a;
+      --bg-secondary: #111827;
+      --bg-card: rgba(17, 24, 39, 0.7);
+      --border-card: rgba(99, 102, 241, 0.15);
+      --text-primary: #e2e8f0;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --accent-1: #6366f1;
+      --accent-2: #8b5cf6;
+      --accent-3: #06b6d4;
+      --accent-4: #10b981;
+      --accent-5: #f59e0b;
+      --accent-6: #ef4444;
+      --gradient-1: linear-gradient(135deg, #6366f1, #8b5cf6);
+      --gradient-2: linear-gradient(135deg, #06b6d4, #10b981);
+      --shadow-glow: 0 0 30px rgba(99, 102, 241, 0.1);
+      --radius: 16px;
+    }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+
+    /* Animated gradient background */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse at 20% 20%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 80%, rgba(6, 182, 212, 0.06) 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 50%, rgba(139, 92, 246, 0.04) 0%, transparent 60%);
+      z-index: -1;
+      animation: bgShift 20s ease-in-out infinite alternate;
+    }
+
+    @keyframes bgShift {
+      0% {
+        opacity: 0.8;
+      }
+
+      100% {
+        opacity: 1;
+      }
+    }
+
+    .container {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    /* ── Header ── */
+    .header {
+      text-align: center;
+      margin-bottom: 40px;
+      padding: 40px 24px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: var(--radius);
+      backdrop-filter: blur(20px);
+      box-shadow: var(--shadow-glow);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .header::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: var(--gradient-1);
+    }
+
+    .header h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      background: var(--gradient-1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 8px;
+    }
+
+    .header p {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+    }
+
+    /* ── Run Selector ── */
+    .selector-bar {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 32px;
+      padding: 20px 24px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: var(--radius);
+      backdrop-filter: blur(20px);
+      flex-wrap: wrap;
+    }
+
+    .selector-bar label {
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .selector-bar select {
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      border: 1px solid var(--border-card);
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-family: inherit;
+      font-size: 0.9rem;
+      cursor: pointer;
+      min-width: 260px;
+      transition: border-color 0.2s;
+    }
+
+    .selector-bar select:hover,
+    .selector-bar select:focus {
+      border-color: var(--accent-1);
+      outline: none;
+    }
+
+    .run-info {
+      margin-left: auto;
+      display: flex;
+      gap: 24px;
+    }
+
+    .run-info .stat {
+      text-align: center;
+    }
+
+    .run-info .stat-value {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: var(--accent-3);
+    }
+
+    .run-info .stat-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    /* ── Section Titles ── */
+    .section-title {
+      font-size: 1.2rem;
+      font-weight: 600;
+      margin: 40px 0 20px;
+      padding-left: 16px;
+      border-left: 3px solid var(--accent-1);
+      color: var(--text-primary);
+    }
+
+    /* ── Chart Grid ── */
+    .chart-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(580px, 1fr));
+      gap: 24px;
+      margin-bottom: 32px;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: var(--radius);
+      padding: 24px;
+      backdrop-filter: blur(20px);
+      box-shadow: var(--shadow-glow);
+      transition: transform 0.25s ease, box-shadow 0.25s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 40px rgba(99, 102, 241, 0.15);
+    }
+
+    .card h3 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .card canvas {
+      width: 100% !important;
+      max-height: 340px;
+    }
+
+    .card.full-width {
+      grid-column: 1 / -1;
+    }
+
+    /* ── Stats Table ── */
+    .stats-table-wrap {
+      overflow-x: auto;
+      margin-top: 8px;
+    }
+
+    .stats-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+
+    .stats-table th,
+    .stats-table td {
+      padding: 10px 14px;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .stats-table th {
+      color: var(--text-muted);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-size: 0.72rem;
+      border-bottom: 1px solid var(--border-card);
+    }
+
+    .stats-table th:first-child,
+    .stats-table td:first-child {
+      text-align: left;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .stats-table td {
+      color: var(--text-secondary);
+      border-bottom: 1px solid rgba(99, 102, 241, 0.06);
+    }
+
+    .stats-table tr:hover td {
+      background: rgba(99, 102, 241, 0.04);
+    }
+
+    .stats-table .highlight {
+      color: var(--accent-3);
+      font-weight: 600;
+    }
+
+    /* ── External Chart Tooltip ── */
+    #chartTooltip {
+      position: absolute;
+      pointer-events: none;
+      background: rgba(15, 20, 35, 0.96);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 0.82rem;
+      color: #e2e8f0;
+      z-index: 9999;
+      opacity: 0;
+      transition: opacity 0.15s ease, transform 0.15s ease;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), 0 0 20px rgba(99, 102, 241, 0.1);
+      max-width: 360px;
+      backdrop-filter: blur(12px);
+    }
+
+    #chartTooltip.active {
+      opacity: 1;
+    }
+
+    #chartTooltip .tooltip-title {
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: #94a3b8;
+      font-size: 0.78rem;
+    }
+
+    #chartTooltip .tooltip-body-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 2px 0;
+    }
+
+    #chartTooltip .tooltip-color-box {
+      width: 10px;
+      height: 10px;
+      border-radius: 3px;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+
+    #chartTooltip .tooltip-value {
+      font-weight: 500;
+      color: #e2e8f0;
+    }
+
+    #chartTooltip .tooltip-footer {
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(99, 102, 241, 0.15);
+      font-weight: 600;
+      color: #06b6d4;
+      font-size: 0.82rem;
+    }
+
+    @media (max-width: 700px) {
+      .chart-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .selector-bar {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .run-info {
+        margin-left: 0;
+        width: 100%;
+        justify-content: space-around;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="chartTooltip"></div>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <h1>⚡ Transformer Inference Performance Dashboard</h1>
+      <p>Transformer Inference Engine — Benchmark Analytics</p>
+    </header>
+
+    <!-- Run Selector -->
+    <div class="selector-bar">
+      <label for="runSelect">Benchmark Run</label>
+      <select id="runSelect">
+        <option>Loading…</option>
+      </select>
+      <div class="run-info" id="runInfo"></div>
+    </div>
+
+    <!-- Historical Trends -->
+    <h2 class="section-title">Historical Trends (All Runs)</h2>
+    <div class="chart-grid">
+      <div class="card">
+        <h3>Average Pipeline Total Time Over Time</h3>
+        <canvas id="historicalChart"></canvas>
+      </div>
+      <div class="card">
+        <h3>Average Tokens Per Second Over Time</h3>
+        <canvas id="historicalTokensChart"></canvas>
+      </div>
+      <div class="card full-width">
+        <h3>Average Kernel Operation Times Over Time</h3>
+        <canvas id="historicalKernelChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Kernel Benchmarks -->
+    <h2 class="section-title">Kernel Benchmarks</h2>
+    <div class="chart-grid">
+      <div class="card">
+        <h3>Kernel Time vs Configuration (Batch Size x Seq Len)</h3>
+        <canvas id="kernelLineChart"></canvas>
+      </div>
+      <div class="card">
+        <h3>Kernel Time Composition</h3>
+        <canvas id="kernelStackedBar"></canvas>
+      </div>
+      <div class="card full-width" id="kernelStatsCard">
+        <h3>Kernel Statistics</h3>
+        <div class="stats-table-wrap" id="kernelStatsTable"></div>
+      </div>
+    </div>
+
+    <!-- Pipeline Benchmarks -->
+    <h2 class="section-title">Pipeline Benchmarks</h2>
+    <div class="chart-grid">
+      <div class="card">
+        <h3>Total Pipeline Time per Config</h3>
+        <canvas id="pipelineTotalChart"></canvas>
+      </div>
+      <div class="card">
+        <h3>Prefill vs Decode Time</h3>
+        <canvas id="pipelineStackedChart"></canvas>
+      </div>
+      <div class="card full-width">
+        <h3>Tokens Per Second (Prefill vs Decode)</h3>
+        <canvas id="throughputChart"></canvas>
+      </div>
+      <div class="card full-width" id="pipelineStatsCard">
+        <h3>Pipeline Statistics</h3>
+        <div class="stats-table-wrap" id="pipelineStatsTable"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /* ──────────────────────────────────────────────
+       Utility: Statistics helpers
+    ────────────────────────────────────────────── */
+    const Stats = {
+      min: (a) => Math.min(...a),
+      max: (a) => Math.max(...a),
+      sum: (a) => a.reduce((s, v) => s + v, 0),
+      mean: (a) => a.length === 0 ? 0 : Stats.sum(a) / a.length,
+      median: (a) => {
+        if (a.length === 0) return 0;
+        const s = [...a].sort((x, y) => x - y);
+        const m = Math.floor(s.length / 2);
+        return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+      },
+      stddev: (a) => {
+        if (a.length === 0) return 0;
+        const m = Stats.mean(a);
+        return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / a.length);
+      },
+      cv: (a) => Stats.mean(a) === 0 ? 0 : (Stats.stddev(a) / Stats.mean(a)) * 100,
+      percentile: (a, p) => {
+        if (a.length === 0) return 0;
+        const s = [...a].sort((x, y) => x - y);
+        const i = (p / 100) * (s.length - 1);
+        const lo = Math.floor(i), hi = Math.ceil(i);
+        return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (i - lo);
+      },
+      p95: (a) => Stats.percentile(a, 95),
+      p99: (a) => Stats.percentile(a, 99),
+    };
+
+    const fmt = (v, d = 4) => v != null && !isNaN(v) ? Number(v).toFixed(d) : '—';
+
+    /* ──────────────────────────────────────────────
+       CSV Parser (skips # comment lines)
+    ────────────────────────────────────────────── */
+    function parseCSV(text) {
+      const lines = text.split('\n').filter(l => l.trim() && !l.startsWith('#'));
+      if (lines.length < 2) return [];
+      const headers = lines[0].split(',').map(h => h.trim());
+      return lines.slice(1).map(line => {
+        const vals = line.split(',');
+        const obj = {};
+        headers.forEach((h, i) => {
+          const v = vals[i]?.trim();
+          obj[h] = isNaN(v) || v === '' ? v : parseFloat(v);
+        });
+        return obj;
+      }).filter(r => r.batch_size != null); // filter out empty rows
+    }
+
+    /* ──────────────────────────────────────────────
+       External HTML Tooltip Handler
+    ────────────────────────────────────────────── */
+    function externalTooltipHandler(context) {
+      const { chart, tooltip } = context;
+      const el = document.getElementById('chartTooltip');
+
+      if (tooltip.opacity === 0) {
+        el.classList.remove('active');
+        return;
+      }
+
+      let html = '';
+      const titleLines = tooltip.title || [];
+      if (titleLines.length > 0) {
+        html += `<div class="tooltip-title">${titleLines.join(' ')}</div>`;
+      }
+
+      const bodyLines = tooltip.body || [];
+      bodyLines.forEach((bodyItem, i) => {
+        const colors = tooltip.labelColors[i];
+        const bgColor = colors.backgroundColor || colors.borderColor || '#6366f1';
+        const text = bodyItem.lines.join('');
+        html += `<div class="tooltip-body-row">`;
+        html += `<span class="tooltip-color-box" style="background:${bgColor}"></span>`;
+        html += `<span class="tooltip-value">${text}</span>`;
+        html += `</div>`;
+      });
+
+      const afterBody = tooltip.afterBody || [];
+      if (afterBody.length > 0) {
+        afterBody.forEach(line => {
+          if (line) html += `<div class="tooltip-body-row"><span class="tooltip-value" style="color:#94a3b8;font-size:0.78rem">${line}</span></div>`;
+        });
+      }
+
+      const footerLines = tooltip.footer || [];
+      if (footerLines.length > 0) {
+        html += `<div class="tooltip-footer">${footerLines.join('<br>')}</div>`;
+      }
+
+      el.innerHTML = html;
+      el.classList.add('active');
+
+      const rect = chart.canvas.getBoundingClientRect();
+      const tooltipWidth = el.offsetWidth;
+      const tooltipHeight = el.offsetHeight;
+
+      let left = rect.left + window.scrollX + tooltip.caretX + 12;
+      let top = rect.top + window.scrollY + tooltip.caretY - tooltipHeight / 2;
+
+      if (left + tooltipWidth > window.innerWidth + window.scrollX - 10) {
+        left = rect.left + window.scrollX + tooltip.caretX - tooltipWidth - 12;
+      }
+      if (top < window.scrollY + 5) top = window.scrollY + 5;
+
+      el.style.left = left + 'px';
+      el.style.top = top + 'px';
+    }
+
+    /* ──────────────────────────────────────────────
+       Chart.js defaults & Variables
+    ────────────────────────────────────────────── */
+    Chart.defaults.color = '#94a3b8';
+    Chart.defaults.borderColor = 'rgba(99,102,241,0.08)';
+    Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+    Chart.defaults.font.size = 12;
+    Chart.defaults.plugins.legend.labels.usePointStyle = true;
+    Chart.defaults.plugins.legend.labels.padding = 16;
+    Chart.defaults.plugins.tooltip.enabled = false;
+    Chart.defaults.plugins.tooltip.external = externalTooltipHandler;
+    Chart.defaults.animation = { duration: 700, easing: 'easeOutQuart' };
+    Chart.defaults.interaction.mode = 'index';
+    Chart.defaults.interaction.intersect = false;
+
+    const COLORS = {
+      embedding: { bg: 'rgba(99,102,241,0.15)', border: '#6366f1' },
+      qkv_proj: { bg: 'rgba(6,182,212,0.15)', border: '#06b6d4' },
+      attn_qk: { bg: 'rgba(16,185,129,0.15)', border: '#10b981' },
+      softmax: { bg: 'rgba(245,158,11,0.15)', border: '#f59e0b' },
+      layernorm: { bg: 'rgba(236,72,153,0.15)', border: '#ec4899' },
+      prefill: { bg: 'rgba(139,92,246,0.15)', border: '#8b5cf6' },
+      decode: { bg: 'rgba(239,68,68,0.15)', border: '#ef4444' },
+      total: { bg: 'rgba(16,185,129,0.12)', border: '#10b981' },
+      toks: { bg: 'rgba(236,72,153,0.12)', border: '#ec4899' },
+    };
+
+    let charts = {};
+
+    function destroyCharts() {
+      const PERSISTENT = new Set(['historicalChart', 'historicalTokensChart', 'historicalKernelChart']);
+      Object.keys(charts).forEach(id => {
+        if (!PERSISTENT.has(id)) {
+          charts[id].destroy();
+          delete charts[id];
+        }
+      });
+    }
+
+    function makeChart(id, config) {
+      if (charts[id]) charts[id].destroy();
+      const ctx = document.getElementById(id).getContext('2d');
+      charts[id] = new Chart(ctx, config);
+    }
+
+    function buildStatsTable(containerId, stages) {
+      const headers = ['Metric', 'Min', 'Max', 'Mean', 'Median', 'Std Dev', 'CV %', 'P95', 'P99', 'Count'];
+      let html = '<table class="stats-table"><thead><tr>';
+      headers.forEach(h => html += `<th>${h}</th>`);
+      html += '</tr></thead><tbody>';
+
+      stages.forEach(({ name, values, isMs }) => {
+        if (!values || values.length === 0) return;
+        const unit = isMs ? ' ms' : '';
+        html += `<tr>
+          <td>${name}</td>
+          <td>${fmt(Stats.min(values))}${unit}</td>
+          <td>${fmt(Stats.max(values))}${unit}</td>
+          <td class="highlight">${fmt(Stats.mean(values))}${unit}</td>
+          <td>${fmt(Stats.median(values))}${unit}</td>
+          <td>${fmt(Stats.stddev(values))}</td>
+          <td>${fmt(Stats.cv(values), 1)}%</td>
+          <td>${fmt(Stats.p95(values))}${unit}</td>
+          <td>${fmt(Stats.p99(values))}${unit}</td>
+          <td>${values.length}</td>
+        </tr>`;
+      });
+
+      html += '</tbody></table>';
+      document.getElementById(containerId).innerHTML = html;
+    }
+
+    /* ──────────────────────────────────────────────
+       Render Kernel Charts
+    ────────────────────────────────────────────── */
+    function renderKernelCharts(data) {
+      if (!data || data.length === 0) return;
+      const labels = data.map(r => `B${r.batch_size}xS${r.seq_len}`);
+
+      makeChart('kernelLineChart', {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            { label: 'Embedding', data: data.map(r => r.embedding_ms), borderColor: COLORS.embedding.border, backgroundColor: COLORS.embedding.bg, fill: true, tension: 0.35 },
+            { label: 'QKV Proj', data: data.map(r => r.qkv_proj_ms), borderColor: COLORS.qkv_proj.border, backgroundColor: COLORS.qkv_proj.bg, fill: true, tension: 0.35 },
+            { label: 'Attn QK', data: data.map(r => r.attn_qk_ms), borderColor: COLORS.attn_qk.border, backgroundColor: COLORS.attn_qk.bg, fill: true, tension: 0.35 },
+            { label: 'Softmax', data: data.map(r => r.softmax_ms), borderColor: COLORS.softmax.border, backgroundColor: COLORS.softmax.bg, fill: true, tension: 0.35 },
+            { label: 'Layernorm', data: data.map(r => r.layernorm_ms), borderColor: COLORS.layernorm.border, backgroundColor: COLORS.layernorm.bg, fill: true, tension: 0.35 },
+          ]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { title: { display: true, text: 'Config', color: '#64748b' } },
+            y: { title: { display: true, text: 'Time (ms)', color: '#64748b' }, beginAtZero: true }
+          },
+          plugins: { tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmt(ctx.parsed.y, 4)} ms` } } }
+        }
+      });
+
+      makeChart('kernelStackedBar', {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            { label: 'Embedding', data: data.map(r => r.embedding_ms), backgroundColor: COLORS.embedding.border },
+            { label: 'QKV Proj', data: data.map(r => r.qkv_proj_ms), backgroundColor: COLORS.qkv_proj.border },
+            { label: 'Attn QK', data: data.map(r => r.attn_qk_ms), backgroundColor: COLORS.attn_qk.border },
+            { label: 'Softmax', data: data.map(r => r.softmax_ms), backgroundColor: COLORS.softmax.border },
+            { label: 'Layernorm', data: data.map(r => r.layernorm_ms), backgroundColor: COLORS.layernorm.border },
+          ]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { stacked: true, title: { display: true, text: 'Config', color: '#64748b' } },
+            y: { stacked: true, title: { display: true, text: 'Time (ms)', color: '#64748b' }, beginAtZero: true }
+          },
+          plugins: {
+            tooltip: {
+              callbacks: {
+                label: ctx => `${ctx.dataset.label}: ${fmt(ctx.parsed.y, 4)} ms`,
+                footer: ctxItems => `Total: ${fmt(ctxItems.reduce((s, c) => s + c.parsed.y, 0), 4)} ms`
+              }
+            }
+          }
+        }
+      });
+
+      buildStatsTable('kernelStatsTable', [
+        { name: 'Embedding', values: data.map(r => r.embedding_ms), isMs: true },
+        { name: 'QKV Proj', values: data.map(r => r.qkv_proj_ms), isMs: true },
+        { name: 'Attn QK', values: data.map(r => r.attn_qk_ms), isMs: true },
+        { name: 'Softmax', values: data.map(r => r.softmax_ms), isMs: true },
+        { name: 'Layernorm', values: data.map(r => r.layernorm_ms), isMs: true },
+        { name: 'Total Tracked', values: data.map(r => r.embedding_ms + r.qkv_proj_ms + r.attn_qk_ms + r.softmax_ms + r.layernorm_ms), isMs: true },
+      ]);
+    }
+
+    /* ──────────────────────────────────────────────
+       Render Pipeline Charts
+    ────────────────────────────────────────────── */
+    function renderPipelineCharts(data) {
+      if (!data || data.length === 0) return;
+      const labels = data.map(r => `B${r.batch_size}xS${r.seq_len} (T:${r.max_new_tokens})`);
+
+      makeChart('pipelineTotalChart', {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Total Time (ms)',
+            data: data.map(r => r.total_ms),
+            borderColor: COLORS.total.border,
+            backgroundColor: COLORS.total.bg,
+            fill: true, tension: 0.3
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { title: { display: true, text: 'Config', color: '#64748b' } },
+            y: { title: { display: true, text: 'Time (ms)', color: '#64748b' }, beginAtZero: true }
+          },
+          plugins: { tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmt(ctx.parsed.y, 2)} ms` } } }
+        }
+      });
+
+      makeChart('pipelineStackedChart', {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            { label: 'Prefill', data: data.map(r => r.prefill_ms), backgroundColor: COLORS.prefill.border },
+            { label: 'Decode', data: data.map(r => r.decode_ms), backgroundColor: COLORS.decode.border },
+          ]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { stacked: true, title: { display: true, text: 'Config', color: '#64748b' } },
+            y: { stacked: true, title: { display: true, text: 'Time (ms)', color: '#64748b' }, beginAtZero: true }
+          },
+          plugins: {
+            tooltip: {
+              callbacks: {
+                label: ctx => `${ctx.dataset.label}: ${fmt(ctx.parsed.y, 2)} ms`,
+                footer: ctxItems => `Total: ${fmt(ctxItems.reduce((s, c) => s + c.parsed.y, 0), 2)} ms`
+              }
+            }
+          }
+        }
+      });
+
+      makeChart('throughputChart', {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            { label: 'Prefill Tokens/sec', data: data.map(r => r.prefill_tok_sec), backgroundColor: COLORS.prefill.bg, borderColor: COLORS.prefill.border, borderWidth: 1 },
+            { label: 'Decode Tokens/sec', data: data.map(r => r.decode_tok_sec), backgroundColor: COLORS.decode.bg, borderColor: COLORS.decode.border, borderWidth: 1 },
+          ]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { title: { display: true, text: 'Config', color: '#64748b' } },
+            y: { title: { display: true, text: 'Tokens / sec', color: '#64748b' }, beginAtZero: true }
+          },
+          plugins: { tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmt(ctx.parsed.y, 2)} tok/s` } } }
+        }
+      });
+
+      buildStatsTable('pipelineStatsTable', [
+        { name: 'Prefill Time', values: data.map(r => r.prefill_ms), isMs: true },
+        { name: 'Decode Time', values: data.map(r => r.decode_ms), isMs: true },
+        { name: 'Total Time', values: data.map(r => r.total_ms), isMs: true },
+        { name: 'Prefill Throughput', values: data.map(r => r.prefill_tok_sec), isMs: false },
+        { name: 'Decode Throughput', values: data.map(r => r.decode_tok_sec), isMs: false },
+      ]);
+    }
+
+    /* ──────────────────────────────────────────────
+       Run info bar
+    ────────────────────────────────────────────── */
+    function updateRunInfo(kernelData, pipelineData) {
+      const el = document.getElementById('runInfo');
+      const totalConfigs = pipelineData.length;
+      const avgMs = Stats.mean(pipelineData.map(r => r.total_ms));
+      const avgTps = Stats.mean(pipelineData.map(r => r.decode_tok_sec));
+
+      el.innerHTML = `
+        <div class="stat"><div class="stat-value">${totalConfigs}</div><div class="stat-label">Configurations</div></div>
+        <div class="stat"><div class="stat-value">${fmt(avgMs, 1)}</div><div class="stat-label">Avg Total ms</div></div>
+        <div class="stat"><div class="stat-value">${fmt(avgTps, 1)}</div><div class="stat-label">Avg Decode Tok/s</div></div>
+        <div class="stat"><div class="stat-value">${kernelData.length}</div><div class="stat-label">Kernel Settings</div></div>
+      `;
+    }
+
+    /* ──────────────────────────────────────────────
+       Load & render a run
+    ────────────────────────────────────────────── */
+    async function loadRun(run) {
+      destroyCharts();
+
+      const [kernelText, pipelineText] = await Promise.all([
+        fetch('performance_testing/' + run.kernel_csv, { cache: 'no-store' }).then(r => r.text()),
+        fetch('performance_testing/' + run.pipeline_csv, { cache: 'no-store' }).then(r => r.text()),
+      ]);
+
+      const kernelData = parseCSV(kernelText);
+      const pipelineData = parseCSV(pipelineText);
+
+      updateRunInfo(kernelData, pipelineData);
+      renderKernelCharts(kernelData);
+      renderPipelineCharts(pipelineData);
+    }
+
+    /* ──────────────────────────────────────────────
+       Render Historical Chart
+    ────────────────────────────────────────────── */
+    async function renderHistoricalTrend(runsArray) {
+      const historyData = [];
+
+      for (const r of runsArray) {
+        try {
+          const [pipeText, kernText] = await Promise.all([
+            fetch('performance_testing/' + r.pipeline_csv, { cache: 'no-store' }).then(res => res.text()),
+            fetch('performance_testing/' + r.kernel_csv, { cache: 'no-store' }).then(res => res.text()),
+          ]);
+
+          const pData = parseCSV(pipeText);
+          const kData = parseCSV(kernText);
+
+          if (pData.length > 0 && kData.length > 0) {
+            historyData.push({
+              label: r.label || r.name,
+              avg_pipeline: Stats.mean(pData.map(d => d.total_ms)),
+              avg_decode_tps: Stats.mean(pData.map(d => d.decode_tok_sec)),
+              avg_embedding: Stats.mean(kData.map(d => d.embedding_ms)),
+              avg_qkv: Stats.mean(kData.map(d => d.qkv_proj_ms)),
+              avg_attn: Stats.mean(kData.map(d => d.attn_qk_ms)),
+              avg_softmax: Stats.mean(kData.map(d => d.softmax_ms)),
+              avg_layernorm: Stats.mean(kData.map(d => d.layernorm_ms)),
+            });
+          }
+        } catch (e) {
+          console.warn('Could not load historical data for run:', r.name, e);
+        }
+      }
+
+      if (historyData.length === 0) return;
+      const labels = historyData.map(d => d.label);
+
+      // 1. Pipeline Time Trend
+      new Chart(document.getElementById('historicalChart').getContext('2d'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Avg Total Time (ms)',
+            data: historyData.map(d => d.avg_pipeline),
+            borderColor: COLORS.total.border,
+            backgroundColor: COLORS.total.bg,
+            fill: true, tension: 0.2
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { title: { display: true, text: 'Run', color: '#64748b' } },
+            y: { title: { display: true, text: 'Avg Time (ms)', color: '#64748b' }, beginAtZero: true }
+          },
+          plugins: { tooltip: { callbacks: { label: ctx => `Avg Time: ${fmt(ctx.parsed.y, 2)} ms` } } }
+        }
+      });
+
+      // 2. Tokens Trend
+      new Chart(document.getElementById('historicalTokensChart').getContext('2d'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Avg Decode Tokens/sec',
+            data: historyData.map(d => d.avg_decode_tps),
+            borderColor: COLORS.toks.border,
+            backgroundColor: COLORS.toks.bg,
+            fill: true, tension: 0.2
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { title: { display: true, text: 'Run', color: '#64748b' } },
+            y: { title: { display: true, text: 'Tokens/sec', color: '#64748b' }, beginAtZero: true }
+          },
+          plugins: { tooltip: { callbacks: { label: ctx => `Avg Decode: ${fmt(ctx.parsed.y, 2)} tok/s` } } }
+        }
+      });
+
+      // 3. Kernel Stages Trend
+      new Chart(document.getElementById('historicalKernelChart').getContext('2d'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            { label: 'Embedding', data: historyData.map(d => d.avg_embedding), borderColor: COLORS.embedding.border, backgroundColor: COLORS.embedding.bg, fill: false, tension: 0.2 },
+            { label: 'QKV Proj', data: historyData.map(d => d.avg_qkv), borderColor: COLORS.qkv_proj.border, backgroundColor: COLORS.qkv_proj.bg, fill: false, tension: 0.2 },
+            { label: 'Attn QK', data: historyData.map(d => d.avg_attn), borderColor: COLORS.attn_qk.border, backgroundColor: COLORS.attn_qk.bg, fill: false, borderDash: [5, 5], tension: 0.2 },
+            { label: 'Softmax', data: historyData.map(d => d.avg_softmax), borderColor: COLORS.softmax.border, backgroundColor: COLORS.softmax.bg, fill: false, tension: 0.2 },
+            { label: 'Layernorm', data: historyData.map(d => d.avg_layernorm), borderColor: COLORS.layernorm.border, backgroundColor: COLORS.layernorm.bg, fill: false, tension: 0.2 },
+          ]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { title: { display: true, text: 'Run', color: '#64748b' } },
+            y: { title: { display: true, text: 'Avg Time (ms)', color: '#64748b' }, beginAtZero: true }
+          },
+          plugins: { tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmt(ctx.parsed.y, 4)} ms` } } }
+        }
+      });
+    }
+
+    /* ──────────────────────────────────────────────
+       Init
+    ────────────────────────────────────────────── */
+    async function init() {
+      const select = document.getElementById('runSelect');
+      let runs;
+
+      try {
+        const resp = await fetch('performance_testing/runs.json', { cache: 'no-store' });
+        runs = await resp.json();
+      } catch (e) {
+        select.innerHTML = '<option>Error loading runs.json</option>';
+        console.error('Failed to load runs.json:', e);
+        return;
+      }
+
+      select.innerHTML = '';
+      runs.forEach((run, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = run.label || run.name;
+        select.appendChild(opt);
+      });
+
+      select.addEventListener('change', () => loadRun(runs[select.value]));
+
+      if (runs.length > 0) {
+        renderHistoricalTrend(runs);
+        loadRun(runs[0]);
+      }
+    }
+
+    init();
+  </script>
+</body>
+
+</html>
