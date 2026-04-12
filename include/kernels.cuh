@@ -121,6 +121,7 @@ namespace kernels {
         int batch_size, 
         int seq_len, 
         int vocab_size, 
+        int row_stride = 0,
         cudaStream_t stream = 0
     );
 }

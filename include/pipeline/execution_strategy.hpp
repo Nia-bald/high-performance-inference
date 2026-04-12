@@ -14,16 +14,25 @@ namespace pipeline {
 // virtual hooks (run_prefill, run_decode, finalize) without any awareness
 // of timing or metrics — guaranteeing consistent metric definitions across
 // all strategies.
+//
+// Input is a batch of sequences (vector of vector<int>), each potentially
+// a different length. Strategies are responsible for padding/packing.
 class ExecutionStrategy {
 public:
     virtual ~ExecutionStrategy() = default;
 
     // Template method — NOT virtual. This is the single entry point.
     // Defines what "prefill time" and "decode time" mean structurally.
-    GenerationResult generate(const std::vector<int>& input_ids, const GenerationConfig& config) {
+    GenerationResult generate(const std::vector<std::vector<int>>& input_sequences, const GenerationConfig& config) {
         GenerationResult result;
-        result.output_sequence = input_ids;
-        result.metrics.prompt_tokens = input_ids.size();
+        result.output_sequences = input_sequences;
+
+        // Total prompt tokens across the batch
+        int total_prompt_tokens = 0;
+        for (const auto& seq : input_sequences) {
+            total_prompt_tokens += seq.size();
+        }
+        result.metrics.prompt_tokens = total_prompt_tokens;
 
         // ---- PREFILL: base class defines and times this phase ----
         result.metrics.prefill_time_ms = time_cuda_execution([&]() {
@@ -60,10 +69,10 @@ public:
 protected:
     // Strategies implement ONLY these — no timing, no metric math.
 
-    // Process the full prompt and produce the first new token.
+    // Process the full prompt batch and produce the first new token for each sequence.
     virtual void run_prefill(GenerationResult& result, const GenerationConfig& config) = 0;
 
-    // Generate remaining tokens autoregressively.
+    // Generate remaining tokens autoregressively for all sequences.
     virtual void run_decode(GenerationResult& result, const GenerationConfig& config) = 0;
 
     // Post-processing (e.g., decode token IDs to text).

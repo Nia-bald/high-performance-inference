@@ -16,7 +16,7 @@ enum class StrategyType {
 // for a single batch and runs a specific execution strategy.
 class BatchExecutor {
 public:
-    BatchExecutor(Transformer& model, GPT2Tokenizer& tokenizer, StrategyType strategy, size_t scratch_size);
+    BatchExecutor(Transformer& model, GPT2Tokenizer& tokenizer, StrategyType strategy, size_t scratch_size, int max_batch_size = 1);
     ~BatchExecutor();
 
     // Disable copy to maintain unique ownership of stream and memory
@@ -27,8 +27,8 @@ public:
     BatchExecutor(BatchExecutor&&) noexcept;
     BatchExecutor& operator=(BatchExecutor&&) noexcept;
 
-    // Execute the batch asynchronously on its own stream
-    pipeline::GenerationResult execute(const std::vector<int>& input_ids, const pipeline::GenerationConfig& config);
+    // Execute a batch of sequences
+    pipeline::GenerationResult execute(const std::vector<std::vector<int>>& input_sequences, const pipeline::GenerationConfig& config);
 
     // Wait for stream to finish
     void synchronize();

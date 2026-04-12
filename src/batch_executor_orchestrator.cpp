@@ -34,18 +34,26 @@ void BatchExecutorOrchestrator::load_weights(const std::string& weights_path) {
     load_gpt2_weights(*model, weights_path, config.num_layers, config.d_model, config.vocab_size, config.max_seq_len, config.d_ff);
 }
 
-std::future<pipeline::GenerationResult> BatchExecutorOrchestrator::submit_batch(const std::vector<int>& prompt_ids, const pipeline::GenerationConfig& gen_config, StrategyType strategy) {
+std::future<pipeline::GenerationResult> BatchExecutorOrchestrator::submit_batch(const std::vector<std::vector<int>>& input_sequences, const pipeline::GenerationConfig& gen_config, StrategyType strategy) {
     
-    return std::async(std::launch::async, [this, prompt_ids, gen_config, strategy]() {
+    return std::async(std::launch::async, [this, input_sequences, gen_config, strategy]() {
         // Create an executor with exactly the memory it needs
-        BatchExecutor executor(*model, tokenizer, strategy, required_scratch_size);
+        BatchExecutor executor(*model, tokenizer, strategy, required_scratch_size, max_batch_size);
         
         // Execute the batch
-        auto result = executor.execute(prompt_ids, gen_config);
+        auto result = executor.execute(input_sequences, gen_config);
         
         // Ensure stream is done before cleaning up
         executor.synchronize();
         
         return result;
     });
+}
+
+std::future<pipeline::GenerationResult> BatchExecutorOrchestrator::submit_single(const std::vector<int>& prompt_ids, const pipeline::GenerationConfig& gen_config, StrategyType strategy) {
+    // Wrap single sequence in a batch of 1
+    std::vector<std::vector<int>> batch = { prompt_ids };
+    pipeline::GenerationConfig single_config = gen_config;
+    single_config.batch_size = 1;
+    return submit_batch(batch, single_config, strategy);
 }

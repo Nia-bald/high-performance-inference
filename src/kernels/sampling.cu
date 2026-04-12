@@ -26,13 +26,14 @@ namespace kernels {
     __global__ void argmax_kernel(
         const float* __restrict__ logits, // [Batch*Seq, Vocab]
         int* __restrict__ output_ids,     // [Batch*Seq]
-        int vocab_size) 
+        int vocab_size,
+        int row_stride) 
     {
         // 1. Identify which row (token position) this block is handling
         int row_idx = blockIdx.x;
         
         // Pointer to the start of this row's logits
-        const float* row_logits = logits + row_idx * vocab_size;
+        const float* row_logits = logits + row_idx * row_stride;
 
         // 2. Thread-Local Max
         // Initialize with lowest possible float
@@ -96,15 +97,21 @@ namespace kernels {
         int batch_size, 
         int seq_len, 
         int vocab_size, 
+        int row_stride,
         cudaStream_t stream) 
     {
         int total_rows = batch_size * seq_len;
         int threads = 256; // Robust size for reductions
         
+        if (row_stride <= 0) {
+            row_stride = vocab_size;
+        }
+
         argmax_kernel<<<total_rows, threads, 0, stream>>>(
             logits, 
             output_ids, 
-            vocab_size
+            vocab_size,
+            row_stride
         );
         
         cudaError_t err = cudaGetLastError();
