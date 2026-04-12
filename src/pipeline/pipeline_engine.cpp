@@ -56,7 +56,8 @@ void PipelineEngine::run_prefill(GenerationResult& result, const GenerationConfi
     // For each sequence b, the last valid logits are at position (seq_len_b - 1)
     // With padding, all sequences are padded_seq_len, so we use that for uniform argmax
     float* last_logits = d_logits + (padded_seq_len - 1) * vocab_size;
-    kernels::launch_argmax(last_logits, d_next_tokens, batch_size, 1, vocab_size, stream);
+    int row_stride = padded_seq_len * vocab_size;
+    kernels::launch_argmax(last_logits, d_next_tokens, batch_size, 1, vocab_size, row_stride, stream);
 
     // Copy all next tokens back
     std::vector<int> next_tokens(batch_size);
@@ -96,7 +97,8 @@ void PipelineEngine::run_decode(GenerationResult& result, const GenerationConfig
 
         // Argmax on last position for each sequence
         float* last_logits = d_logits + (padded_seq_len - 1) * vocab_size;
-        kernels::launch_argmax(last_logits, d_next_tokens, batch_size, 1, vocab_size, stream);
+        int row_stride = padded_seq_len * vocab_size;
+        kernels::launch_argmax(last_logits, d_next_tokens, batch_size, 1, vocab_size, row_stride, stream);
 
         std::vector<int> next_tokens(batch_size);
         cudaMemcpyAsync(next_tokens.data(), d_next_tokens, batch_size * sizeof(int), cudaMemcpyDeviceToHost, stream);

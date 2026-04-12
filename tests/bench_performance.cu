@@ -421,8 +421,7 @@ int main() {
     benchmark::BenchmarkRunConfig run_config;
     run_config.scenarios = {
         { .batch_size = 1, .max_new_tokens = 50 },
-        // Future: { .batch_size = 4, .max_new_tokens = 50 },
-        //         { .batch_size = 1, .max_new_tokens = 100 },
+        { .batch_size = 2, .max_new_tokens = 50 }
     };
 
     GPT2Tokenizer temp_tokenizer;
