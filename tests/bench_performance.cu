@@ -15,10 +15,7 @@
 #include "pipeline/pipeline_engine.hpp"
 #include "batch_executor_orchestrator.hpp"
 #include "benchmark_config.hpp"
-#include "json.hpp"
-
 namespace fs = std::filesystem;
-using json = nlohmann::json;
 
 #define CUDA_CHECK(call) \
     do { \
@@ -365,36 +362,7 @@ static void writeSummaryReport(const std::string& output_dir, const std::string&
     std::cout << "  Summary report saved: " << path << "\n";
 }
 
-static void updateRunsJson(const std::string& runs_json_path, const std::string& timestamp) {
-    json runs = json::array();
-    if (fs::exists(runs_json_path)) {
-        try {
-            std::ifstream f(runs_json_path);
-            runs = json::parse(f);
-        } catch (...) { }
-    }
-
-    std::string run_name = "run_" + timestamp;
-    std::string label = "Run " + timestamp.substr(0, 4) + "-" +
-                        timestamp.substr(4, 2) + "-" + timestamp.substr(6, 2) +
-                        " " + timestamp.substr(9, 2) + ":" +
-                        timestamp.substr(11, 2) + ":" + timestamp.substr(13, 2);
-
-    json new_run = {
-        {"name", run_name},
-        {"label", label},
-        {"kernel_csv", run_name + "/kernel_benchmark_" + timestamp + ".csv"},
-        {"pipeline_csv", run_name + "/pipeline_benchmark_" + timestamp + ".csv"}
-    };
-
-    runs.push_back(new_run);
-
-    std::ofstream out(runs_json_path);
-    out << std::setw(4) << runs << std::endl;
-    std::cout << "  Dashboard updated: " << runs_json_path << "\n";
-}
-
-int main() {
+int main(int argc, char** argv) {
     std::cout << "================================================================\n";
     std::cout << "  Transformer Pipeline — Performance Benchmark Suite\n";
     std::cout << "================================================================\n";
@@ -404,8 +372,36 @@ int main() {
     std::cout << "GPU: " << prop.name << " (SM " << prop.major << "." << prop.minor 
               << ", " << (prop.totalGlobalMem / (1024 * 1024)) << " MB)\n\n";
 
-    std::string timestamp = getTimestamp();
-    std::string report_dir = "./docs/performance_testing/run_" + timestamp;
+    std::string input_dir = "/home/niare/Projects/transformer_inference_engine/dataset/input";
+    int batch_size = 1;
+    int max_new_tokens = 50;
+    std::string session_id = "";
+    std::string output_dir = "";
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--dataset-dir" && i + 1 < argc) {
+            input_dir = argv[++i];
+        } else if (arg == "--batch-size" && i + 1 < argc) {
+            batch_size = std::stoi(argv[++i]);
+        } else if (arg == "--max-new-tokens" && i + 1 < argc) {
+            max_new_tokens = std::stoi(argv[++i]);
+        } else if (arg == "--output-dir" && i + 1 < argc) {
+            output_dir = argv[++i];
+        } else if (arg == "--session-id" && i + 1 < argc) {
+            session_id = argv[++i];
+        }
+    }
+
+    if (session_id.empty()) {
+        session_id = getTimestamp();
+    }
+    std::string timestamp = session_id;
+    
+    if (output_dir.empty()) {
+        output_dir = "./docs/performance_testing/run_" + timestamp;
+    }
+    std::string report_dir = output_dir;
     fs::create_directories(report_dir);
 
     int VOCAB_SIZE = 50257;
@@ -416,19 +412,15 @@ int main() {
     int D_FF = 3072;
 
     // ---- Benchmark Run Configuration ----
-    // Defines the scenarios to sweep. Add more ScenarioConfigs to benchmark
-    // different batch sizes, token counts, etc.
     benchmark::BenchmarkRunConfig run_config;
     run_config.scenarios = {
-        { .batch_size = 1, .max_new_tokens = 50 },
-        { .batch_size = 2, .max_new_tokens = 50 }
+        { .batch_size = batch_size, .max_new_tokens = max_new_tokens }
     };
 
     GPT2Tokenizer temp_tokenizer;
     temp_tokenizer.load("/home/niare/Projects/transformer_inference_engine/vocab.json", "/home/niare/Projects/transformer_inference_engine/merges.txt");
     
     std::vector<PromptConfig> prompts;
-    std::string input_dir = "/home/niare/Projects/transformer_inference_engine/dataset/input";
     
     if (fs::exists(input_dir)) {
         for (const auto& entry : fs::directory_iterator(input_dir)) {
@@ -478,9 +470,6 @@ int main() {
 
     writeSummaryReport(report_dir, timestamp, kernel_results, all_pipeline_results);
     
-    std::string runs_json_path = "./docs/performance_testing/runs.json";
-    updateRunsJson(runs_json_path, timestamp);
-
     std::cout << "\n================================================================\n";
     std::cout << "  Benchmark complete. Reports in: " << report_dir << "/\n";
     std::cout << "================================================================\n";
