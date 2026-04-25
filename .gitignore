@@ -3,3 +3,5 @@
 /venv
 /dataset
 /docs/performance_testing
+/gpt2-ct2
+gpt2_weights.bin

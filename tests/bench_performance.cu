@@ -477,10 +477,7 @@ int main(int argc, char** argv) {
     // BENCHMARK 2: Full pipeline — run each scenario
     std::vector<PipelineBenchResult> all_pipeline_results;
     for (const auto& scenario : run_config.scenarios) {
-        std::string dataset_output_dir = "/home/niare/Projects/transformer_inference_engine/dataset/output/run_" + timestamp;
-        fs::create_directories(dataset_output_dir);
-
-        auto pipeline_results = benchmarkPipeline(prompts, scenario, dataset_output_dir, VOCAB_SIZE, MAX_SEQ_LEN, D_MODEL, NUM_HEADS, NUM_LAYERS, D_FF);
+        auto pipeline_results = benchmarkPipeline(prompts, scenario, report_dir, VOCAB_SIZE, MAX_SEQ_LEN, D_MODEL, NUM_HEADS, NUM_LAYERS, D_FF);
         all_pipeline_results.insert(all_pipeline_results.end(), pipeline_results.begin(), pipeline_results.end());
     }
     writePipelineReport(report_dir, timestamp, all_pipeline_results);
