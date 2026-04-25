@@ -27,12 +27,14 @@ int PipelineEngine::pad_and_pack(const std::vector<std::vector<int>>& sequences,
         max_len = std::max(max_len, (int)seq.size());
     }
 
-    // Pack into flat [batch_size, max_len] with 0-padding
+    // Pack into flat [batch_size, max_len] with 0-padding on the LEFT
     int batch_size = sequences.size();
     packed.resize(batch_size * max_len, 0);
     for (int b = 0; b < batch_size; ++b) {
-        for (int t = 0; t < (int)sequences[b].size(); ++t) {
-            packed[b * max_len + t] = sequences[b][t];
+        int seq_len = sequences[b].size();
+        int pad_len = max_len - seq_len;
+        for (int t = 0; t < seq_len; ++t) {
+            packed[b * max_len + pad_len + t] = sequences[b][t];
         }
     }
     return max_len;
