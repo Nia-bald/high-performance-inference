@@ -4,6 +4,7 @@
 #include "memory.h"
 #include <vector>
 #include <cuda_runtime.h>
+#include <chrono>
 
 namespace pipeline {
 
@@ -35,30 +36,39 @@ public:
         result.metrics.prompt_tokens = total_prompt_tokens;
 
         // ---- PREFILL: base class defines and times this phase ----
-        result.metrics.prefill_time_ms = time_cuda_execution([&]() {
+        auto prefill_times = time_execution([&]() {
             run_prefill(result, config);
         });
+        result.metrics.prefill_time_ms = prefill_times.first;
+        result.metrics.prefill_time_ms_gpu = prefill_times.second;
 
         // ---- DECODE: base class defines and times this phase ----
-        result.metrics.decode_time_ms = time_cuda_execution([&]() {
+        auto decode_times = time_execution([&]() {
             run_decode(result, config);
         });
+        result.metrics.decode_time_ms = decode_times.first;
+        result.metrics.decode_time_ms_gpu = decode_times.second;
 
         // ---- METRICS: computed once, consistently, for all strategies ----
-        result.metrics.total_time_ms = result.metrics.prefill_time_ms 
-                                     + result.metrics.decode_time_ms;
-
-        result.metrics.prefill_tokens_per_sec = 
-            result.metrics.prompt_tokens / (result.metrics.prefill_time_ms / 1000.0);
+        result.metrics.total_time_ms = result.metrics.prefill_time_ms + result.metrics.decode_time_ms;
+        result.metrics.prefill_tokens_per_sec = result.metrics.prompt_tokens / (result.metrics.prefill_time_ms / 1000.0);
+        
+        result.metrics.total_time_ms_gpu = result.metrics.prefill_time_ms_gpu + result.metrics.decode_time_ms_gpu;
+        result.metrics.prefill_tokens_per_sec_gpu = result.metrics.prompt_tokens / (result.metrics.prefill_time_ms_gpu / 1000.0);
 
         double decode_time_sec = result.metrics.decode_time_ms / 1000.0;
+        double decode_time_sec_gpu = result.metrics.decode_time_ms_gpu / 1000.0;
         size_t batch_size = input_sequences.size();
+
         if (result.metrics.generated_tokens > batch_size) {
             // generated_tokens includes the tokens from prefill
             result.metrics.decode_tokens_per_sec = 
                 (result.metrics.generated_tokens - batch_size) / decode_time_sec;
+            result.metrics.decode_tokens_per_sec_gpu = 
+                (result.metrics.generated_tokens - batch_size) / decode_time_sec_gpu;
         } else {
             result.metrics.decode_tokens_per_sec = 0.0;
+            result.metrics.decode_tokens_per_sec_gpu = 0.0;
         }
 
         // ---- FINALIZE: strategy-specific post-processing (e.g., detokenize) ----
@@ -83,27 +93,37 @@ protected:
     virtual cudaStream_t get_stream() const = 0;
 
 private:
-    // Precise GPU timing via CUDA events — used only by the base class.
+    // Simultaneous Wall-clock and GPU timing. Returns {wall_ms, gpu_ms}
     template <typename F>
-    double time_cuda_execution(F&& func) {
+    std::pair<double, double> time_execution(F&& func) {
         cudaStream_t s = get_stream();
 
-        cudaEvent_t start, stop;
-        cudaEventCreate(&start);
-        cudaEventCreate(&stop);
+        // Ensure all previous CUDA work is completely finished before starting
+        cudaStreamSynchronize(s);
 
-        cudaEventRecord(start, s);
+        cudaEvent_t start_evt, stop_evt;
+        cudaEventCreate(&start_evt);
+        cudaEventCreate(&stop_evt);
+
+        auto start_wall = std::chrono::high_resolution_clock::now();
+        cudaEventRecord(start_evt, s);
+        
+        // Execute the function (which submits kernels to the stream)
         func();
-        cudaEventRecord(stop, s);
-        cudaEventSynchronize(stop);
+        
+        cudaEventRecord(stop_evt, s);
+        // Block the CPU until the GPU finishes all submitted kernels
+        cudaStreamSynchronize(s);
+        
+        auto end_wall = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double, std::milli> wall_ms = end_wall - start_wall;
 
-        float ms = 0.0f;
-        cudaEventElapsedTime(&ms, start, stop);
+        float gpu_ms = 0.0f;
+        cudaEventElapsedTime(&gpu_ms, start_evt, stop_evt);
+        cudaEventDestroy(start_evt);
+        cudaEventDestroy(stop_evt);
 
-        cudaEventDestroy(start);
-        cudaEventDestroy(stop);
-
-        return static_cast<double>(ms);
+        return {wall_ms.count(), static_cast<double>(gpu_ms)};
     }
 };
 

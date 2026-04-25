@@ -181,6 +181,12 @@ struct PipelineBenchResult {
     double total_ms;
     double prefill_tok_sec;
     double decode_tok_sec;
+    
+    double prefill_ms_gpu;
+    double decode_ms_gpu;
+    double total_ms_gpu;
+    double prefill_tok_sec_gpu;
+    double decode_tok_sec_gpu;
 };
 
 // Load real weights definition
@@ -265,8 +271,16 @@ static std::vector<PipelineBenchResult> benchmarkPipeline(
     r.prefill_tok_sec = result.metrics.prefill_tokens_per_sec;
     r.decode_tok_sec = result.metrics.decode_tokens_per_sec;
 
-    std::cout << "  Prefill Tok/s: " << r.prefill_tok_sec 
-              << " | Decode Tok/s: " << r.decode_tok_sec << "\n";
+    r.prefill_ms_gpu = result.metrics.prefill_time_ms_gpu;
+    r.decode_ms_gpu = result.metrics.decode_time_ms_gpu;
+    r.total_ms_gpu = result.metrics.total_time_ms_gpu;
+    r.prefill_tok_sec_gpu = result.metrics.prefill_tokens_per_sec_gpu;
+    r.decode_tok_sec_gpu = result.metrics.decode_tokens_per_sec_gpu;
+
+    std::cout << "  [Wall] Prefill Tok/s: " << r.prefill_tok_sec 
+              << " | Decode Tok/s: " << r.decode_tok_sec << "\n"
+              << "  [GPU]  Prefill Tok/s: " << r.prefill_tok_sec_gpu 
+              << " | Decode Tok/s: " << r.decode_tok_sec_gpu << "\n";
 
     // Save generated text for each sequence in the batch
     for (int b = 0; b < (int)result.decoded_texts.size(); ++b) {
@@ -301,12 +315,15 @@ static void writeKernelReport(const std::string& output_dir, const std::string& 
 static void writePipelineReport(const std::string& output_dir, const std::string& timestamp, const std::vector<PipelineBenchResult>& results) {
     std::string path = output_dir + "/pipeline_benchmark_" + timestamp + ".csv";
     std::ofstream csv(path);
-    csv << "batch_size,seq_len,max_new_tokens,prefill_ms,decode_ms,total_ms,prefill_tok_sec,decode_tok_sec\n";
+    csv << "batch_size,seq_len,max_new_tokens,prefill_ms,decode_ms,total_ms,prefill_tok_sec,decode_tok_sec,"
+        << "prefill_ms_gpu,decode_ms_gpu,total_ms_gpu,prefill_tok_sec_gpu,decode_tok_sec_gpu\n";
 
     for (const auto& r : results) {
         csv << r.batch_size << "," << r.seq_len << "," << r.max_new_tokens << ","
             << r.prefill_ms << "," << r.decode_ms << "," << r.total_ms << "," 
-            << r.prefill_tok_sec << "," << r.decode_tok_sec << "\n";
+            << r.prefill_tok_sec << "," << r.decode_tok_sec << ","
+            << r.prefill_ms_gpu << "," << r.decode_ms_gpu << "," << r.total_ms_gpu << "," 
+            << r.prefill_tok_sec_gpu << "," << r.decode_tok_sec_gpu << "\n";
     }
     std::cout << "  Pipeline report saved: " << path << "\n";
 }

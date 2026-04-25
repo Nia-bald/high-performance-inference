@@ -15,6 +15,13 @@ struct GenerationMetrics {
 
     double prefill_tokens_per_sec = 0.0;
     double decode_tokens_per_sec = 0.0;
+
+    // Pure GPU timings (excluding CPU overhead)
+    double prefill_time_ms_gpu = 0.0;
+    double decode_time_ms_gpu = 0.0;
+    double total_time_ms_gpu = 0.0;
+    double prefill_tokens_per_sec_gpu = 0.0;
+    double decode_tokens_per_sec_gpu = 0.0;
 };
 
 struct GenerationResult {
