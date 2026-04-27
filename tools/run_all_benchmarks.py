@@ -27,12 +27,22 @@ def update_runs_json(runs_json_path, session_id, engine_name):
     run_name = f"run_{session_id}"
     label = f"Run {label_time} ({engine_name})"
 
+    suffix_map = {
+        "Custom CPP": "",
+        "HuggingFace": "_hf",
+        "CTranslate2": "_ct2",
+        "llama.cpp": "_llama",
+        "vLLM": "_vllm",
+        "ONNX Runtime": "_onnx"
+    }
+    suffix = suffix_map.get(engine_name, "")
+
     new_run = {
         "engine": engine_name,
         "timestamp": iso_timestamp,
         "name": run_name,
         "label": label,
-        "pipeline_csv": f"{run_name}/pipeline_benchmark_{session_id}.csv",
+        "pipeline_csv": f"{run_name}/pipeline_benchmark{suffix}_{session_id}.csv",
         "kernel_csv": f"{run_name}/kernel_benchmark_{session_id}.csv" if engine_name == "Custom CPP" else None
     }
 
