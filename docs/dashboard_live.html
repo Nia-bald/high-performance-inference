@@ -364,6 +364,51 @@
       <p>Transformer Inference Engine — Benchmark Analytics</p>
     </header>
 
+    <!-- Latest Engine Comparison -->
+    <h2 class="section-title">Latest Engine Comparison</h2>
+    <div class="chart-grid">
+      <div class="card">
+        <h3>Prefill Latency (Wall-Clock ms)</h3>
+        <canvas id="enginePrefillLatencyCpu"></canvas>
+      </div>
+      <div class="card">
+        <h3>Prefill Latency (GPU Only ms)</h3>
+        <canvas id="enginePrefillLatencyGpu"></canvas>
+      </div>
+      <div class="card">
+        <h3>Decode Latency (Wall-Clock ms)</h3>
+        <canvas id="engineDecodeLatencyCpu"></canvas>
+      </div>
+      <div class="card">
+        <h3>Decode Latency (GPU Only ms)</h3>
+        <canvas id="engineDecodeLatencyGpu"></canvas>
+      </div>
+      <div class="card">
+        <h3>Total Latency (Wall-Clock ms)</h3>
+        <canvas id="engineLatencyCpu"></canvas>
+      </div>
+      <div class="card">
+        <h3>Total Latency (GPU Only ms)</h3>
+        <canvas id="engineLatencyGpu"></canvas>
+      </div>
+      <div class="card">
+        <h3>Prefill Tokens/Sec (Wall-Clock)</h3>
+        <canvas id="enginePrefillCpu"></canvas>
+      </div>
+      <div class="card">
+        <h3>Prefill Tokens/Sec (GPU Only)</h3>
+        <canvas id="enginePrefillGpu"></canvas>
+      </div>
+      <div class="card">
+        <h3>Decode Tokens/Sec (Wall-Clock)</h3>
+        <canvas id="engineComparisonChartCpu"></canvas>
+      </div>
+      <div class="card">
+        <h3>Decode Tokens/Sec (GPU Only)</h3>
+        <canvas id="engineComparisonChartGpu"></canvas>
+      </div>
+    </div>
+
     <!-- Run Selector -->
     <div class="selector-bar">
       <label for="runSelect">Benchmark Run</label>
@@ -391,8 +436,8 @@
     </div>
 
     <!-- Kernel Benchmarks -->
-    <h2 class="section-title">Kernel Benchmarks</h2>
-    <div class="chart-grid">
+    <h2 class="section-title" id="kernelSectionTitle">Kernel Benchmarks</h2>
+    <div class="chart-grid" id="kernelSectionGrid">
       <div class="card">
         <h3>Kernel Time vs Configuration (Batch Size x Seq Len)</h3>
         <canvas id="kernelLineChart"></canvas>
@@ -418,9 +463,13 @@
         <h3>Prefill vs Decode Time</h3>
         <canvas id="pipelineStackedChart"></canvas>
       </div>
-      <div class="card full-width">
-        <h3>Tokens Per Second (Prefill vs Decode)</h3>
-        <canvas id="throughputChart"></canvas>
+      <div class="card">
+        <h3>CPU Throughput (Wall-clock Tok/s)</h3>
+        <canvas id="throughputCpuChart"></canvas>
+      </div>
+      <div class="card">
+        <h3>GPU Throughput (Pure Kernel Tok/s)</h3>
+        <canvas id="throughputGpuChart"></canvas>
       </div>
       <div class="card full-width" id="pipelineStatsCard">
         <h3>Pipeline Statistics</h3>
@@ -478,7 +527,7 @@
           obj[h] = isNaN(v) || v === '' ? v : parseFloat(v);
         });
         return obj;
-      }).filter(r => r.batch_size != null); // filter out empty rows
+      }).filter(r => r.batch_size != null && r.batch_size !== '' && !isNaN(r.batch_size)); // filter out empty rows
     }
 
     /* ──────────────────────────────────────────────
@@ -571,7 +620,7 @@
     let charts = {};
 
     function destroyCharts() {
-      const PERSISTENT = new Set(['historicalChart', 'historicalTokensChart', 'historicalKernelChart']);
+      const PERSISTENT = new Set(['historicalChart', 'historicalTokensChart', 'historicalKernelChart', 'engineComparisonChartCpu', 'engineComparisonChartGpu', 'enginePrefillCpu', 'enginePrefillGpu', 'engineLatencyCpu', 'engineLatencyGpu', 'enginePrefillLatencyCpu', 'enginePrefillLatencyGpu', 'engineDecodeLatencyCpu', 'engineDecodeLatencyGpu']);
       Object.keys(charts).forEach(id => {
         if (!PERSISTENT.has(id)) {
           charts[id].destroy();
@@ -686,19 +735,31 @@
     ────────────────────────────────────────────── */
     function renderPipelineCharts(data) {
       if (!data || data.length === 0) return;
-      const labels = data.map(r => `B${r.batch_size}xS${r.seq_len} (T:${r.max_new_tokens})`);
+      const labels = data.map(r => `B:${r.batch_size} | S:${r.seq_len} | T:${r.max_new_tokens}`);
+
+      const totalTimeDatasets = [{
+        label: 'Total Time (ms)',
+        data: data.map(r => r.total_ms),
+        borderColor: COLORS.total.border,
+        backgroundColor: COLORS.total.bg,
+        fill: true, tension: 0.3
+      }];
+      if (data.some(r => typeof r.total_ms_gpu === 'number' && r.total_ms_gpu > 0)) {
+        totalTimeDatasets.push({
+          label: 'Total Time (GPU Only ms)',
+          data: data.map(r => r.total_ms_gpu),
+          borderColor: '#06b6d4',
+          backgroundColor: 'rgba(6,182,212,0.1)',
+          borderDash: [5, 5],
+          fill: false, tension: 0.3
+        });
+      }
 
       makeChart('pipelineTotalChart', {
         type: 'line',
         data: {
           labels,
-          datasets: [{
-            label: 'Total Time (ms)',
-            data: data.map(r => r.total_ms),
-            borderColor: COLORS.total.border,
-            backgroundColor: COLORS.total.bg,
-            fill: true, tension: 0.3
-          }]
+          datasets: totalTimeDatasets
         },
         options: {
           responsive: true,
@@ -710,14 +771,20 @@
         }
       });
 
+      const stackedDatasets = [
+        { label: 'Prefill', data: data.map(r => r.prefill_ms), backgroundColor: COLORS.prefill.border, stack: 'Stack 0' },
+        { label: 'Decode', data: data.map(r => r.decode_ms), backgroundColor: COLORS.decode.border, stack: 'Stack 0' },
+      ];
+      if (data.some(r => typeof r.prefill_ms_gpu === 'number' && r.prefill_ms_gpu > 0)) {
+        stackedDatasets.push({ label: 'Prefill (GPU Only)', data: data.map(r => r.prefill_ms_gpu), backgroundColor: 'rgba(139,92,246,0.6)', stack: 'Stack 1' });
+        stackedDatasets.push({ label: 'Decode (GPU Only)', data: data.map(r => r.decode_ms_gpu), backgroundColor: 'rgba(239,68,68,0.6)', stack: 'Stack 1' });
+      }
+
       makeChart('pipelineStackedChart', {
         type: 'bar',
         data: {
           labels,
-          datasets: [
-            { label: 'Prefill', data: data.map(r => r.prefill_ms), backgroundColor: COLORS.prefill.border },
-            { label: 'Decode', data: data.map(r => r.decode_ms), backgroundColor: COLORS.decode.border },
-          ]
+          datasets: stackedDatasets
         },
         options: {
           responsive: true,
@@ -736,15 +803,14 @@
         }
       });
 
-      makeChart('throughputChart', {
+      // CPU Throughput
+      const cpuDatasets = [
+        { label: 'Prefill (CPU)', data: data.map(r => r.prefill_tok_sec), backgroundColor: COLORS.prefill.bg, borderColor: COLORS.prefill.border, borderWidth: 1 },
+        { label: 'Decode (CPU)', data: data.map(r => r.decode_tok_sec), backgroundColor: COLORS.decode.bg, borderColor: COLORS.decode.border, borderWidth: 1 },
+      ];
+      makeChart('throughputCpuChart', {
         type: 'bar',
-        data: {
-          labels,
-          datasets: [
-            { label: 'Prefill Tokens/sec', data: data.map(r => r.prefill_tok_sec), backgroundColor: COLORS.prefill.bg, borderColor: COLORS.prefill.border, borderWidth: 1 },
-            { label: 'Decode Tokens/sec', data: data.map(r => r.decode_tok_sec), backgroundColor: COLORS.decode.bg, borderColor: COLORS.decode.border, borderWidth: 1 },
-          ]
-        },
+        data: { labels, datasets: cpuDatasets },
         options: {
           responsive: true,
           scales: {
@@ -755,13 +821,46 @@
         }
       });
 
-      buildStatsTable('pipelineStatsTable', [
+      // GPU Throughput (if available)
+      const hasGpu = data.some(r => typeof r.prefill_tok_sec_gpu === 'number' && r.prefill_tok_sec_gpu > 0);
+      if (hasGpu) {
+        const gpuDatasets = [
+          { label: 'Prefill (GPU)', data: data.map(r => r.prefill_tok_sec_gpu), backgroundColor: 'rgba(6,182,212,0.15)', borderColor: '#06b6d4', borderWidth: 1 },
+          { label: 'Decode (GPU)', data: data.map(r => r.decode_tok_sec_gpu), backgroundColor: 'rgba(245,158,11,0.15)', borderColor: '#f59e0b', borderWidth: 1 },
+        ];
+        makeChart('throughputGpuChart', {
+          type: 'bar',
+          data: { labels, datasets: gpuDatasets },
+          options: {
+            responsive: true,
+            scales: {
+              x: { title: { display: true, text: 'Config', color: '#64748b' } },
+              y: { title: { display: true, text: 'Tokens / sec', color: '#64748b' }, beginAtZero: true }
+            },
+            plugins: { tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmt(ctx.parsed.y, 2)} tok/s` } } }
+          }
+        });
+      } else {
+        // If no GPU data, hide the container or show empty
+        document.getElementById('throughputGpuChart').parentElement.style.display = 'none';
+        // Make the CPU chart full width if GPU is missing
+        document.getElementById('throughputCpuChart').parentElement.classList.add('full-width');
+      }
+
+      const pipelineStats = [
         { name: 'Prefill Time', values: data.map(r => r.prefill_ms), isMs: true },
         { name: 'Decode Time', values: data.map(r => r.decode_ms), isMs: true },
         { name: 'Total Time', values: data.map(r => r.total_ms), isMs: true },
         { name: 'Prefill Throughput', values: data.map(r => r.prefill_tok_sec), isMs: false },
         { name: 'Decode Throughput', values: data.map(r => r.decode_tok_sec), isMs: false },
-      ]);
+      ];
+      if (data.some(r => typeof r.total_ms_gpu === 'number' && r.total_ms_gpu > 0)) {
+        pipelineStats.push({ name: 'Prefill Time (GPU Only)', values: data.map(r => r.prefill_ms_gpu), isMs: true });
+        pipelineStats.push({ name: 'Decode Time (GPU Only)', values: data.map(r => r.decode_ms_gpu), isMs: true });
+        pipelineStats.push({ name: 'Prefill Throughput (GPU)', values: data.map(r => r.prefill_tok_sec_gpu), isMs: false });
+        pipelineStats.push({ name: 'Decode Throughput (GPU)', values: data.map(r => r.decode_tok_sec_gpu), isMs: false });
+      }
+      buildStatsTable('pipelineStatsTable', pipelineStats);
     }
 
     /* ──────────────────────────────────────────────
@@ -787,16 +886,32 @@
     async function loadRun(run) {
       destroyCharts();
 
-      const [kernelText, pipelineText] = await Promise.all([
-        fetch('performance_testing/' + run.kernel_csv, { cache: 'no-store' }).then(r => r.text()),
-        fetch('performance_testing/' + run.pipeline_csv, { cache: 'no-store' }).then(r => r.text()),
-      ]);
-
-      const kernelData = parseCSV(kernelText);
+      const pipelineText = await fetch('performance_testing/' + run.pipeline_csv, { cache: 'no-store' }).then(r => r.text());
       const pipelineData = parseCSV(pipelineText);
+      
+      let kernelData = [];
+      if (run.kernel_csv) {
+          try {
+              const kernelText = await fetch('performance_testing/' + run.kernel_csv, { cache: 'no-store' }).then(r => r.text());
+              kernelData = parseCSV(kernelText);
+          } catch(e) {
+              console.warn("No kernel data available", e);
+          }
+      }
 
       updateRunInfo(kernelData, pipelineData);
-      renderKernelCharts(kernelData);
+      
+      const kernelTitle = document.getElementById('kernelSectionTitle');
+      const kernelGrid = document.getElementById('kernelSectionGrid');
+      if (kernelData.length > 0) {
+        if (kernelTitle) kernelTitle.style.display = 'block';
+        if (kernelGrid) kernelGrid.style.display = 'grid';
+        renderKernelCharts(kernelData);
+      } else {
+        if (kernelTitle) kernelTitle.style.display = 'none';
+        if (kernelGrid) kernelGrid.style.display = 'none';
+      }
+      
       renderPipelineCharts(pipelineData);
     }
 
@@ -933,8 +1048,189 @@
       select.addEventListener('change', () => loadRun(runs[select.value]));
 
       if (runs.length > 0) {
+        renderEngineComparison(runs);
         renderHistoricalTrend(runs);
         loadRun(runs[0]);
+      }
+    }
+
+    async function renderEngineComparison(runs) {
+      const latestRuns = {};
+      runs.forEach(r => {
+        const engine = r.engine || "Custom CPP";
+        if (!latestRuns[engine]) {
+          latestRuns[engine] = r;
+        } else {
+          const t1 = new Date(r.timestamp || 0).getTime();
+          const t2 = new Date(latestRuns[engine].timestamp || 0).getTime();
+          if (t1 > t2) latestRuns[engine] = r;
+        }
+      });
+
+      const engines = Object.keys(latestRuns).sort();
+      const datasetsCpu = [];
+      const prefillDatasetsCpu = [];
+      const latencyDatasetsCpu = [];
+      const prefillLatencyDatasetsCpu = [];
+      const decodeLatencyDatasetsCpu = [];
+      
+      const datasetsGpu = [];
+      const prefillDatasetsGpu = [];
+      const latencyDatasetsGpu = [];
+      const prefillLatencyDatasetsGpu = [];
+      const decodeLatencyDatasetsGpu = [];
+      
+      let compositeLabels = new Set();
+      const engineDataMapCpu = {};
+      const engineDataMapGpu = {};
+
+      const displayEnginesCpu = [];
+      const displayEnginesGpu = [];
+
+      for (const eng of engines) {
+        displayEnginesCpu.push(eng);
+        const r = latestRuns[eng];
+        try {
+          const pipeText = await fetch('performance_testing/' + r.pipeline_csv, { cache: 'no-store' }).then(res => res.text());
+          const pData = parseCSV(pipeText);
+          
+          // Main Wall-Clock Trace
+          const dataMapCpu = {};
+          const prefillMapCpu = {};
+          const latencyMapCpu = {};
+          const prefillLatencyMapCpu = {};
+          const decodeLatencyMapCpu = {};
+          pData.forEach(row => {
+            const key = `B:${row.batch_size} | S:${row.seq_len} | T:${row.max_new_tokens}`;
+            compositeLabels.add(key);
+            dataMapCpu[key] = row.decode_tok_sec;
+            prefillMapCpu[key] = row.prefill_tok_sec;
+            latencyMapCpu[key] = row.total_ms;
+            prefillLatencyMapCpu[key] = row.prefill_ms;
+            decodeLatencyMapCpu[key] = row.decode_ms;
+          });
+          engineDataMapCpu[eng] = { decode: dataMapCpu, prefill: prefillMapCpu, latency: latencyMapCpu, prefillLatency: prefillLatencyMapCpu, decodeLatency: decodeLatencyMapCpu };
+
+          // GPU-Only Trace (if exists)
+          if (pData.some(row => typeof row.decode_tok_sec_gpu === 'number' && row.decode_tok_sec_gpu > 0)) {
+            displayEnginesGpu.push(eng);
+            const dataMapGpu = {};
+            const prefillMapGpu = {};
+            const latencyMapGpu = {};
+            const prefillLatencyMapGpu = {};
+            const decodeLatencyMapGpu = {};
+            pData.forEach(row => {
+              const key = `B:${row.batch_size} | S:${row.seq_len} | T:${row.max_new_tokens}`;
+              compositeLabels.add(key);
+              dataMapGpu[key] = row.decode_tok_sec_gpu;
+              prefillMapGpu[key] = row.prefill_tok_sec_gpu;
+              latencyMapGpu[key] = row.total_ms_gpu;
+              prefillLatencyMapGpu[key] = row.prefill_ms_gpu;
+              decodeLatencyMapGpu[key] = row.decode_ms_gpu;
+            });
+            engineDataMapGpu[eng] = { decode: dataMapGpu, prefill: prefillMapGpu, latency: latencyMapGpu, prefillLatency: prefillLatencyMapGpu, decodeLatency: decodeLatencyMapGpu };
+          }
+
+        } catch(e) {
+          console.warn("Failed to load pipeline for", eng);
+        }
+      }
+
+      const labels = Array.from(compositeLabels).sort();
+      const engineColors = {
+        "Custom CPP": { bg: 'rgba(16,185,129,0.2)', border: '#10b981' },
+        "Custom CPP (GPU Only)": { bg: 'rgba(6,182,212,0.2)', border: '#06b6d4' },
+        "HuggingFace": { bg: 'rgba(245,158,11,0.2)', border: '#f59e0b' },
+        "vLLM": { bg: 'rgba(99,102,241,0.2)', border: '#6366f1' },
+        "CTranslate2": { bg: 'rgba(239,68,68,0.2)', border: '#ef4444' },
+        "ONNX Runtime": { bg: 'rgba(139,92,246,0.2)', border: '#8b5cf6' },
+        "llama.cpp": { bg: 'rgba(236,72,153,0.2)', border: '#ec4899' }
+      };
+
+      for (const eng of displayEnginesCpu) {
+        const maps = engineDataMapCpu[eng];
+        const dataDecode = labels.map(lbl => maps.decode[lbl] || 0);
+        const dataPrefill = labels.map(lbl => maps.prefill[lbl] || 0);
+        const dataLatency = labels.map(lbl => maps.latency[lbl] || 0);
+        const dataPrefillLatency = labels.map(lbl => maps.prefillLatency[lbl] || 0);
+        const dataDecodeLatency = labels.map(lbl => maps.decodeLatency[lbl] || 0);
+        
+        const col = engineColors[eng] || { bg: 'rgba(200,200,200,0.2)', border: '#888' };
+        datasetsCpu.push({ label: eng, data: dataDecode, backgroundColor: col.bg, borderColor: col.border, borderWidth: 1 });
+        prefillDatasetsCpu.push({ label: eng, data: dataPrefill, backgroundColor: col.bg, borderColor: col.border, borderWidth: 1 });
+        latencyDatasetsCpu.push({ label: eng, data: dataLatency, backgroundColor: col.bg, borderColor: col.border, borderWidth: 1 });
+        prefillLatencyDatasetsCpu.push({ label: eng, data: dataPrefillLatency, backgroundColor: col.bg, borderColor: col.border, borderWidth: 1 });
+        decodeLatencyDatasetsCpu.push({ label: eng, data: dataDecodeLatency, backgroundColor: col.bg, borderColor: col.border, borderWidth: 1 });
+      }
+
+      for (const eng of displayEnginesGpu) {
+        const maps = engineDataMapGpu[eng];
+        const dataDecode = labels.map(lbl => maps.decode[lbl] || 0);
+        const dataPrefill = labels.map(lbl => maps.prefill[lbl] || 0);
+        const dataLatency = labels.map(lbl => maps.latency[lbl] || 0);
+        const dataPrefillLatency = labels.map(lbl => maps.prefillLatency[lbl] || 0);
+        const dataDecodeLatency = labels.map(lbl => maps.decodeLatency[lbl] || 0);
+        
+        const colorKey = engineColors[eng + " (GPU Only)"] ? eng + " (GPU Only)" : eng;
+        const col = engineColors[colorKey] || { bg: 'rgba(200,200,200,0.2)', border: '#888' };
+        datasetsGpu.push({ label: eng + " (GPU Only)", data: dataDecode, backgroundColor: col.bg, borderColor: col.border, borderWidth: 1 });
+        prefillDatasetsGpu.push({ label: eng + " (GPU Only)", data: dataPrefill, backgroundColor: col.bg, borderColor: col.border, borderWidth: 1 });
+        latencyDatasetsGpu.push({ label: eng + " (GPU Only)", data: dataLatency, backgroundColor: col.bg, borderColor: col.border, borderWidth: 1 });
+        prefillLatencyDatasetsGpu.push({ label: eng + " (GPU Only)", data: dataPrefillLatency, backgroundColor: col.bg, borderColor: col.border, borderWidth: 1 });
+        decodeLatencyDatasetsGpu.push({ label: eng + " (GPU Only)", data: dataDecodeLatency, backgroundColor: col.bg, borderColor: col.border, borderWidth: 1 });
+      }
+
+      const createBarChart = (id, datasets, yLabel, formatStr) => {
+        makeChart(id, {
+          type: 'bar',
+          data: { labels, datasets },
+          options: {
+            responsive: true,
+            scales: {
+              x: { title: { display: true, text: 'Configuration', color: '#64748b' } },
+              y: { title: { display: true, text: yLabel, color: '#64748b' }, beginAtZero: true }
+            },
+            plugins: { tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmt(ctx.parsed.y, 2)} ${formatStr}` } } }
+          }
+        });
+      };
+
+      createBarChart('enginePrefillLatencyCpu', prefillLatencyDatasetsCpu, 'Prefill Time (ms)', 'ms');
+      createBarChart('engineDecodeLatencyCpu', decodeLatencyDatasetsCpu, 'Decode Time (ms)', 'ms');
+      createBarChart('engineLatencyCpu', latencyDatasetsCpu, 'Total Time (ms)', 'ms');
+      createBarChart('enginePrefillCpu', prefillDatasetsCpu, 'Prefill Tokens/sec', 'tok/s');
+      createBarChart('engineComparisonChartCpu', datasetsCpu, 'Decode Tokens/sec', 'tok/s');
+
+      const gpuChartContainer = document.getElementById('engineComparisonChartGpu').parentElement;
+      const prefillGpuContainer = document.getElementById('enginePrefillGpu').parentElement;
+      const latencyGpuContainer = document.getElementById('engineLatencyGpu').parentElement;
+      const prefillLatencyGpuContainer = document.getElementById('enginePrefillLatencyGpu').parentElement;
+      const decodeLatencyGpuContainer = document.getElementById('engineDecodeLatencyGpu').parentElement;
+
+      if (datasetsGpu.length > 0) {
+        gpuChartContainer.style.display = 'block';
+        prefillGpuContainer.style.display = 'block';
+        latencyGpuContainer.style.display = 'block';
+        prefillLatencyGpuContainer.style.display = 'block';
+        decodeLatencyGpuContainer.style.display = 'block';
+        
+        createBarChart('enginePrefillLatencyGpu', prefillLatencyDatasetsGpu, 'Prefill Time (ms)', 'ms');
+        createBarChart('engineDecodeLatencyGpu', decodeLatencyDatasetsGpu, 'Decode Time (ms)', 'ms');
+        createBarChart('engineLatencyGpu', latencyDatasetsGpu, 'Total Time (ms)', 'ms');
+        createBarChart('enginePrefillGpu', prefillDatasetsGpu, 'Prefill Tokens/sec', 'tok/s');
+        createBarChart('engineComparisonChartGpu', datasetsGpu, 'Decode Tokens/sec', 'tok/s');
+      } else {
+        gpuChartContainer.style.display = 'none';
+        prefillGpuContainer.style.display = 'none';
+        latencyGpuContainer.style.display = 'none';
+        prefillLatencyGpuContainer.style.display = 'none';
+        decodeLatencyGpuContainer.style.display = 'none';
+        
+        document.getElementById('engineComparisonChartCpu').parentElement.classList.add('full-width');
+        document.getElementById('enginePrefillCpu').parentElement.classList.add('full-width');
+        document.getElementById('engineLatencyCpu').parentElement.classList.add('full-width');
+        document.getElementById('enginePrefillLatencyCpu').parentElement.classList.add('full-width');
+        document.getElementById('engineDecodeLatencyCpu').parentElement.classList.add('full-width');
       }
     }
 

@@ -1,0 +1,8 @@
+torch
+transformers
+vllm
+ctranslate2
+onnxruntime-gpu
+optimum
+llama-cpp-python
+huggingface_hub 

@@ -15,10 +15,7 @@
 #include "pipeline/pipeline_engine.hpp"
 #include "batch_executor_orchestrator.hpp"
 #include "benchmark_config.hpp"
-#include "json.hpp"
-
 namespace fs = std::filesystem;
-using json = nlohmann::json;
 
 #define CUDA_CHECK(call) \
     do { \
@@ -184,6 +181,12 @@ struct PipelineBenchResult {
     double total_ms;
     double prefill_tok_sec;
     double decode_tok_sec;
+    
+    double prefill_ms_gpu;
+    double decode_ms_gpu;
+    double total_ms_gpu;
+    double prefill_tok_sec_gpu;
+    double decode_tok_sec_gpu;
 };
 
 // Load real weights definition
@@ -268,8 +271,16 @@ static std::vector<PipelineBenchResult> benchmarkPipeline(
     r.prefill_tok_sec = result.metrics.prefill_tokens_per_sec;
     r.decode_tok_sec = result.metrics.decode_tokens_per_sec;
 
-    std::cout << "  Prefill Tok/s: " << r.prefill_tok_sec 
-              << " | Decode Tok/s: " << r.decode_tok_sec << "\n";
+    r.prefill_ms_gpu = result.metrics.prefill_time_ms_gpu;
+    r.decode_ms_gpu = result.metrics.decode_time_ms_gpu;
+    r.total_ms_gpu = result.metrics.total_time_ms_gpu;
+    r.prefill_tok_sec_gpu = result.metrics.prefill_tokens_per_sec_gpu;
+    r.decode_tok_sec_gpu = result.metrics.decode_tokens_per_sec_gpu;
+
+    std::cout << "  [Wall] Prefill Tok/s: " << r.prefill_tok_sec 
+              << " | Decode Tok/s: " << r.decode_tok_sec << "\n"
+              << "  [GPU]  Prefill Tok/s: " << r.prefill_tok_sec_gpu 
+              << " | Decode Tok/s: " << r.decode_tok_sec_gpu << "\n";
 
     // Save generated text for each sequence in the batch
     for (int b = 0; b < (int)result.decoded_texts.size(); ++b) {
@@ -304,12 +315,15 @@ static void writeKernelReport(const std::string& output_dir, const std::string& 
 static void writePipelineReport(const std::string& output_dir, const std::string& timestamp, const std::vector<PipelineBenchResult>& results) {
     std::string path = output_dir + "/pipeline_benchmark_" + timestamp + ".csv";
     std::ofstream csv(path);
-    csv << "batch_size,seq_len,max_new_tokens,prefill_ms,decode_ms,total_ms,prefill_tok_sec,decode_tok_sec\n";
+    csv << "batch_size,seq_len,max_new_tokens,prefill_ms,decode_ms,total_ms,prefill_tok_sec,decode_tok_sec,"
+        << "prefill_ms_gpu,decode_ms_gpu,total_ms_gpu,prefill_tok_sec_gpu,decode_tok_sec_gpu\n";
 
     for (const auto& r : results) {
         csv << r.batch_size << "," << r.seq_len << "," << r.max_new_tokens << ","
             << r.prefill_ms << "," << r.decode_ms << "," << r.total_ms << "," 
-            << r.prefill_tok_sec << "," << r.decode_tok_sec << "\n";
+            << r.prefill_tok_sec << "," << r.decode_tok_sec << ","
+            << r.prefill_ms_gpu << "," << r.decode_ms_gpu << "," << r.total_ms_gpu << "," 
+            << r.prefill_tok_sec_gpu << "," << r.decode_tok_sec_gpu << "\n";
     }
     std::cout << "  Pipeline report saved: " << path << "\n";
 }
@@ -365,36 +379,7 @@ static void writeSummaryReport(const std::string& output_dir, const std::string&
     std::cout << "  Summary report saved: " << path << "\n";
 }
 
-static void updateRunsJson(const std::string& runs_json_path, const std::string& timestamp) {
-    json runs = json::array();
-    if (fs::exists(runs_json_path)) {
-        try {
-            std::ifstream f(runs_json_path);
-            runs = json::parse(f);
-        } catch (...) { }
-    }
-
-    std::string run_name = "run_" + timestamp;
-    std::string label = "Run " + timestamp.substr(0, 4) + "-" +
-                        timestamp.substr(4, 2) + "-" + timestamp.substr(6, 2) +
-                        " " + timestamp.substr(9, 2) + ":" +
-                        timestamp.substr(11, 2) + ":" + timestamp.substr(13, 2);
-
-    json new_run = {
-        {"name", run_name},
-        {"label", label},
-        {"kernel_csv", run_name + "/kernel_benchmark_" + timestamp + ".csv"},
-        {"pipeline_csv", run_name + "/pipeline_benchmark_" + timestamp + ".csv"}
-    };
-
-    runs.push_back(new_run);
-
-    std::ofstream out(runs_json_path);
-    out << std::setw(4) << runs << std::endl;
-    std::cout << "  Dashboard updated: " << runs_json_path << "\n";
-}
-
-int main() {
+int main(int argc, char** argv) {
     std::cout << "================================================================\n";
     std::cout << "  Transformer Pipeline — Performance Benchmark Suite\n";
     std::cout << "================================================================\n";
@@ -404,8 +389,36 @@ int main() {
     std::cout << "GPU: " << prop.name << " (SM " << prop.major << "." << prop.minor 
               << ", " << (prop.totalGlobalMem / (1024 * 1024)) << " MB)\n\n";
 
-    std::string timestamp = getTimestamp();
-    std::string report_dir = "./docs/performance_testing/run_" + timestamp;
+    std::string input_dir = "/home/niare/Projects/transformer_inference_engine/dataset/input";
+    int batch_size = 1;
+    int max_new_tokens = 50;
+    std::string session_id = "";
+    std::string output_dir = "";
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--dataset-dir" && i + 1 < argc) {
+            input_dir = argv[++i];
+        } else if (arg == "--batch-size" && i + 1 < argc) {
+            batch_size = std::stoi(argv[++i]);
+        } else if (arg == "--max-new-tokens" && i + 1 < argc) {
+            max_new_tokens = std::stoi(argv[++i]);
+        } else if (arg == "--output-dir" && i + 1 < argc) {
+            output_dir = argv[++i];
+        } else if (arg == "--session-id" && i + 1 < argc) {
+            session_id = argv[++i];
+        }
+    }
+
+    if (session_id.empty()) {
+        session_id = getTimestamp();
+    }
+    std::string timestamp = session_id;
+    
+    if (output_dir.empty()) {
+        output_dir = "./docs/performance_testing/run_" + timestamp;
+    }
+    std::string report_dir = output_dir;
     fs::create_directories(report_dir);
 
     int VOCAB_SIZE = 50257;
@@ -416,19 +429,15 @@ int main() {
     int D_FF = 3072;
 
     // ---- Benchmark Run Configuration ----
-    // Defines the scenarios to sweep. Add more ScenarioConfigs to benchmark
-    // different batch sizes, token counts, etc.
     benchmark::BenchmarkRunConfig run_config;
     run_config.scenarios = {
-        { .batch_size = 1, .max_new_tokens = 50 },
-        { .batch_size = 2, .max_new_tokens = 50 }
+        { .batch_size = batch_size, .max_new_tokens = max_new_tokens }
     };
 
     GPT2Tokenizer temp_tokenizer;
     temp_tokenizer.load("/home/niare/Projects/transformer_inference_engine/vocab.json", "/home/niare/Projects/transformer_inference_engine/merges.txt");
     
     std::vector<PromptConfig> prompts;
-    std::string input_dir = "/home/niare/Projects/transformer_inference_engine/dataset/input";
     
     if (fs::exists(input_dir)) {
         for (const auto& entry : fs::directory_iterator(input_dir)) {
@@ -468,19 +477,13 @@ int main() {
     // BENCHMARK 2: Full pipeline — run each scenario
     std::vector<PipelineBenchResult> all_pipeline_results;
     for (const auto& scenario : run_config.scenarios) {
-        std::string dataset_output_dir = "/home/niare/Projects/transformer_inference_engine/dataset/output/run_" + timestamp;
-        fs::create_directories(dataset_output_dir);
-
-        auto pipeline_results = benchmarkPipeline(prompts, scenario, dataset_output_dir, VOCAB_SIZE, MAX_SEQ_LEN, D_MODEL, NUM_HEADS, NUM_LAYERS, D_FF);
+        auto pipeline_results = benchmarkPipeline(prompts, scenario, report_dir, VOCAB_SIZE, MAX_SEQ_LEN, D_MODEL, NUM_HEADS, NUM_LAYERS, D_FF);
         all_pipeline_results.insert(all_pipeline_results.end(), pipeline_results.begin(), pipeline_results.end());
     }
     writePipelineReport(report_dir, timestamp, all_pipeline_results);
 
     writeSummaryReport(report_dir, timestamp, kernel_results, all_pipeline_results);
     
-    std::string runs_json_path = "./docs/performance_testing/runs.json";
-    updateRunsJson(runs_json_path, timestamp);
-
     std::cout << "\n================================================================\n";
     std::cout << "  Benchmark complete. Reports in: " << report_dir << "/\n";
     std::cout << "================================================================\n";
