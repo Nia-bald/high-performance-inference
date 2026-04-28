@@ -11,8 +11,13 @@ from transformers.generation.streamers import BaseStreamer
 class TimingStreamer(BaseStreamer):
     def __init__(self):
         self.first_token_time = None
+        self.prompt_skipped = False
         
     def put(self, value):
+        if not self.prompt_skipped:
+            self.prompt_skipped = True
+            return
+            
         if self.first_token_time is None:
             torch.cuda.synchronize()
             self.first_token_time = time.perf_counter()
