@@ -17,13 +17,19 @@ This engine takes the opposite approach: every CUDA kernel, every memory allocat
 
 | Metric | Current |
 |---|---|
-| **Prefill Throughput** | ~200-600 tok/s |
-| **Decode Throughput** | ~27-31 tok/s |
-| **TTFT (4 tokens)** | ~15 ms |
+| **Prefill Throughput** | ~947 tok/s |
+| **Decode Throughput** | ~7 tok/s |
+| **TTFT (79 tokens)** | ~83 ms |
 | **Weight Memory** | 622 MB / 632 MB (98.4%) |
 | **Scratch Memory** | 1136 MB |
 
-> These numbers are from the built-in benchmark suite running real text prompts. Decode throughput is currently without KV cache — every token recomputes the full sequence attention. This is the primary optimization target.
+> These numbers are from the built-in benchmark suite running a 79-token prompt. Decode throughput is currently without KV cache — every token recomputes the full sequence attention. This is the primary optimization target.
+
+### Multi-Engine Comparison
+
+Below is the latest performance comparison between this Custom C++ engine, HuggingFace, llama.cpp, and CTranslate2 running the same 79-token prompt on the GTX 1050 Ti:
+
+![Latest Dashboard Comparison](docs/benchmark_comparison.png)
 
 ## Architecture
 
