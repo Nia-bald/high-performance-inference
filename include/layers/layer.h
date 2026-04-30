@@ -5,6 +5,7 @@
 #include "memory.h"
 
 extern bool ENABLE_LAYER_PROFILING;
+void log_layer_profile_csv(const std::string& layer_name, int batch_size, int seq_len, float ms);
 
 class Layer {
 public:
@@ -32,7 +33,7 @@ public:
             cudaEventSynchronize(stop_event);
             float ms = 0;
             cudaEventElapsedTime(&ms, start_event, stop_event);
-            std::cout << "[Profiler] " << layer_name << " forward pass: " << ms << " ms" << std::endl;
+            log_layer_profile_csv(layer_name, batch_size, seq_len, ms);
         }
     }
 
