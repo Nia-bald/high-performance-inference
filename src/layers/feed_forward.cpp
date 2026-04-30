@@ -3,7 +3,7 @@
 
 // --- Constructor ---
 FeedForward::FeedForward(int d_model, int d_ff, GPUMemoryArena& weights_arena)
-    : d_model(d_model), d_ff(d_ff) 
+    : Layer("FeedForward"), d_model(d_model), d_ff(d_ff) 
 {
     // 1. Up Projection Weights
     d_W_up = weights_arena.allocate<float>(d_model * d_ff);
@@ -29,8 +29,7 @@ void FeedForward::load_weights(const float* h_W_up, const float* h_b_up,
 }
 
 // --- Forward Pass ---
-void FeedForward::forward(const float* d_input, float* d_output, GPUMemoryArena& inference_arena, 
-                          int batch_size, int seq_len, cudaStream_t stream) 
+void FeedForward::forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream) 
 {
     // Total number of tokens to process
     int total_rows = batch_size * seq_len;
@@ -38,7 +37,7 @@ void FeedForward::forward(const float* d_input, float* d_output, GPUMemoryArena&
     // --- Step 1: Up Projection (Expand) ---
     // Input [Rows, d_model] * W_up [d_model, d_ff] -> Hidden [Rows, d_ff]
     
-    float* d_hidden = inference_arena.allocate<float>(total_rows * d_ff);
+    float* d_hidden = inference_arena->allocate<float>(total_rows * d_ff);
 
     kernels::launch_gemm_tiled(
         d_input, 
@@ -69,7 +68,6 @@ void FeedForward::forward(const float* d_input, float* d_output, GPUMemoryArena&
         stream
     );
 
-    // --- Step 4: Final Bias Add ---
     // Output = Output + b_down
     kernels::launch_bias_add(d_output, d_b_down, total_rows, d_model, stream);
 }

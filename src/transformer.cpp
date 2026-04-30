@@ -63,7 +63,7 @@ void Transformer::forward(const int* d_token_ids, float* d_logits,
     for (int i = 0; i < num_layers; ++i) {
 
     // Run Layer: Read from d_in, Write to d_out
-    layers[i]->forward(current_batch_size, current_seq_len, d_in, d_out, inference_arena, stream);
+    layers[i]->forward(d_in, d_out, current_batch_size, current_seq_len, &inference_arena, stream);
 
     // Optimization: Reset the arena to free specific "intra-layer" scratch memory 
     // (like Q, K, V projections) that isn't needed for the next layer.
@@ -77,7 +77,7 @@ void Transformer::forward(const int* d_token_ids, float* d_logits,
     // 4. Final Norm
     // Note: After the loop, 'd_in' holds the valid result of the last layer
     // We can write the normalized output to 'd_out' (reusing Buffer 2)
-    final_norm.forward(d_in, d_out, current_batch_size, current_seq_len, stream);
+    final_norm.forward(d_in, d_out, current_batch_size, current_seq_len, nullptr, stream);
 
     // 5. Head
     kernels::launch_gemm_tiled(

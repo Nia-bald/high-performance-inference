@@ -208,7 +208,7 @@ int main() {
     CUDA_CHECK(cudaEventCreate(&cuda_end));
 
     CUDA_CHECK(cudaEventRecord(cuda_start, 0));
-    ffn.forward(d_input, d_output, inference_arena, BATCH_SIZE, SEQ_LEN, 0);
+    ffn.forward(d_input, d_output, BATCH_SIZE, SEQ_LEN, &inference_arena, 0);
     CUDA_CHECK(cudaEventRecord(cuda_end, 0));
     CUDA_CHECK(cudaEventSynchronize(cuda_end));
 

@@ -3,17 +3,18 @@
 #include "memory.h"
 #include "layers/attention.h"
 #include "kernels.cuh"
+#include "layers/layer.h"
 
 // --- 1. LayerNorm ---
 // Uses your optimized Warp-Intrinsic kernel.
 // Parameters: Gamma (Scale) and Beta (Shift)
-class LayerNorm {
+class LayerNorm : public Layer {
 public:
     LayerNorm(int d_model, GPUMemoryArena& weights_arena);
     ~LayerNorm() = default;
 
     // input: [Batch, Seq, d_model]
-    void forward(const float* d_input, float* d_output, int batch_size, int seq_len, cudaStream_t stream);
+    void forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream) override;
 
     // Static Estimators
     static size_t estimate_weight_memory(int d_model);
@@ -32,14 +33,13 @@ private:
 
 // --- 2. Feed Forward Network (FFN) ---
 // Standard MLP: Input -> UpProj (Expansion) -> GELU -> DownProj (Contraction) -> Output
-class FeedForward {
+class FeedForward : public Layer {
 public:
     // d_ff is usually 4 * d_model
     FeedForward(int d_model, int d_ff, GPUMemoryArena& weights_arena);
     ~FeedForward() = default;
 
-    void forward(const float* d_input, float* d_output, GPUMemoryArena& inference_arena, 
-                 int batch_size, int seq_len, cudaStream_t stream);
+    void forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream) override;
 
     // Static Estimators
     static size_t estimate_weight_memory(int d_model, int d_ff);
@@ -65,12 +65,12 @@ private:
 // Structure (Pre-Norm):
 //   1. Residual_1 = x + Attention(LayerNorm(x))
 //   2. Output     = Residual_1 + FFN(LayerNorm(Residual_1))
-class TransformerBlock {
+class TransformerBlock : public Layer {
 public:
     TransformerBlock(int d_model, int num_heads, int d_ff, 
                      GPUMemoryArena& weights_arena);
     ~TransformerBlock() = default;
-    void forward(int current_batch_size, int current_seq_len, const float* d_input, float* d_output, GPUMemoryArena& inference_arena, cudaStream_t stream);
+    void forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream) override;
 
     // Static Estimators
     static size_t estimate_weight_memory(int d_model, int num_heads, int d_ff);

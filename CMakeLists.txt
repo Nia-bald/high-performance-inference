@@ -33,6 +33,7 @@ set(KERNEL_SOURCES
 # 2. C++ Layers & Core Logic (The Transformer Implementation)
 set(LAYER_SOURCES
     src/transformer.cpp
+    src/layers/layer.cpp
     src/layers/attention.cpp
     src/layers/feed_forward.cpp
     src/layers/layer_norm.cpp

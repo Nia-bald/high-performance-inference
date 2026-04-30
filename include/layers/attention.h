@@ -3,13 +3,15 @@
 #include <cuda_runtime.h>
 #include "memory.h"
 
-class SelfAttention {
+#include "layers/layer.h"
+
+class SelfAttention : public Layer {
 
 public:
     SelfAttention(int d_model, int num_heads, GPUMemoryArena& weights_arena,
             int qk_dim = 0, int v_dim = 0);
     ~SelfAttention() = default;
-    void forward(int batch_size, int seq_len, const float* d_input, float* d_output, GPUMemoryArena& inference_arena, cudaStream_t stream = 0);
+    void forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream) override;
 
     // Static Estimators
     static size_t estimate_weight_memory(int d_model, int num_heads, int qk_dim = 0, int v_dim = 0);

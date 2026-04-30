@@ -21,7 +21,7 @@ static void log_tensor_sample(const char* stage, const float* d_data, size_t tot
 
 
 SelfAttention::SelfAttention(int d_model, int num_heads, GPUMemoryArena& weights_arena, int qk_dim, int v_dim)
-    : d_model(d_model), num_heads(num_heads){
+    : Layer("SelfAttention"), d_model(d_model), num_heads(num_heads){
 
 
     if (qk_dim == 0){
@@ -63,34 +63,33 @@ SelfAttention::SelfAttention(int d_model, int num_heads, GPUMemoryArena& weights
 }
 
 
-void SelfAttention::forward(int batch_size, int seq_len, const float* d_input, float* d_output,
-         GPUMemoryArena& inference_arena, cudaStream_t stream){
+void SelfAttention::forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream){
     
     size_t qk_proj_size = batch_size*seq_len*this->total_qk_dim;
     
     size_t attention_size = seq_len*seq_len*batch_size*this->num_heads;
 
 
-    float* d_Q = inference_arena.allocate<float>(qk_proj_size);
+    float* d_Q = inference_arena->allocate<float>(qk_proj_size);
     kernels::launch_gemm_tiled(d_input, this->d_W_q, d_Q, batch_size*seq_len, this->total_qk_dim, this->d_model, stream);
     kernels::launch_bias_add(d_Q, this->d_b_q, batch_size*seq_len, this->total_qk_dim, stream);
     log_tensor_sample("Q projection", d_Q, qk_proj_size, stream);
 
-    float* d_K = inference_arena.allocate<float>(qk_proj_size);
+    float* d_K = inference_arena->allocate<float>(qk_proj_size);
     kernels::launch_gemm_tiled(d_input, this->d_W_k, d_K, batch_size*seq_len, this->total_qk_dim, this->d_model, stream);
     kernels::launch_bias_add(d_K, this->d_b_k, batch_size*seq_len, this->total_qk_dim, stream);
     log_tensor_sample("K projection", d_K, qk_proj_size, stream);
 
-    float* d_K_transpose = inference_arena.allocate<float>(qk_proj_size);
+    float* d_K_transpose = inference_arena->allocate<float>(qk_proj_size);
     kernels::launch_transpose(d_K, d_K_transpose, batch_size*seq_len, this->total_qk_dim, stream);
     log_tensor_sample("K transpose", d_K_transpose, qk_proj_size, stream);
 
-    float* d_V = inference_arena.allocate<float>(qk_proj_size);
+    float* d_V = inference_arena->allocate<float>(qk_proj_size);
     kernels::launch_gemm_tiled(d_input, this->d_W_v, d_V, batch_size*seq_len, this->total_qk_dim, this->d_model, stream);
     kernels::launch_bias_add(d_V, this->d_b_v, batch_size*seq_len, this->total_qk_dim, stream);
     log_tensor_sample("V projection", d_V, qk_proj_size, stream);
 
-    float* d_attention = inference_arena.allocate<float>(attention_size);
+    float* d_attention = inference_arena->allocate<float>(attention_size);
 
     kernels::launch_batched_gemm_naive(  // transposed matrix batches matrix mult
         d_Q, 
@@ -130,7 +129,7 @@ void SelfAttention::forward(int batch_size, int seq_len, const float* d_input, f
         stream);
     log_tensor_sample("Attention (softmax)", d_attention, attention_size, stream);
     
-    float* d_A_mult_V = inference_arena.allocate<float>(this->total_qk_dim * seq_len * batch_size);
+    float* d_A_mult_V = inference_arena->allocate<float>(this->total_qk_dim * seq_len * batch_size);
 
     kernels::launch_batched_one_to_one_gemm_naive(
         d_attention, 
