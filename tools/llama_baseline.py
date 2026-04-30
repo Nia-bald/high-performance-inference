@@ -57,7 +57,12 @@ def main():
     # 1. Measure Prefill Time
     start_prefill = time.perf_counter()
     for p in batch_prompts:
-        llm.create_completion(p, max_tokens=1, temperature=0.0)
+        llm.create_completion(
+            p, 
+            max_tokens=1, 
+            temperature=0.0,
+            logit_bias={llm.token_eos(): -100.0}
+        )
     end_prefill = time.perf_counter()
     prefill_time = end_prefill - start_prefill
 
@@ -65,7 +70,12 @@ def main():
     start_total = time.perf_counter()
     outputs = []
     for p in batch_prompts:
-        outputs.append(llm.create_completion(p, max_tokens=args.max_new_tokens, temperature=0.0))
+        outputs.append(llm.create_completion(
+            p, 
+            max_tokens=args.max_new_tokens, 
+            temperature=0.0,
+            logit_bias={llm.token_eos(): -100.0}
+        ))
     end_total = time.perf_counter()
     total_time = end_total - start_total
 
