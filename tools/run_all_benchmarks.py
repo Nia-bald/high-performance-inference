@@ -70,128 +70,89 @@ def main():
     print(f"  Output directory created: {output_dir}")
     print(f"  ALL generated text outputs and CSV reports will be saved directly into this directory!\n")
 
-    # 1. Run Custom C++ Engine
-    cpp_executable = "./build/bench_performance"
-    if not os.path.exists(cpp_executable):
-        print(f"Error: C++ executable not found at {cpp_executable}. Please build the project before running benchmarks.")
-        sys.exit(1)
+    runs_json_path = "./docs/performance_testing/runs.json"
+    python_executable = sys.executable
 
-    cpp_command = [
-        cpp_executable,
-        "--dataset-dir", args.dataset_dir,
-        "--batch-size", str(args.batch_size),
-        "--max-new-tokens", str(args.max_new_tokens),
-        "--output-dir", output_dir,
-        "--session-id", session_id
+    engines = [
+        {
+            "name": "Custom CPP",
+            "type": "binary",
+            "path": "./build/bench_performance",
+            "enabled": True,
+            "required": True
+        },
+        {
+            "name": "HuggingFace",
+            "type": "python",
+            "path": "./tools/hf_baseline.py",
+            "enabled": True,
+            "required": False
+        },
+        # {
+        #     "name": "vLLM",
+        #     "type": "python",
+        #     "path": "./tools/vllm_baseline.py",
+        #     "enabled": False, # Commented out due to sm_61 incompatibility
+        #     "required": False
+        # },
+        {
+            "name": "CTranslate2",
+            "type": "python",
+            "path": "./tools/ct2_baseline.py",
+            "enabled": True,
+            "required": False
+        },
+        {
+            "name": "ONNX Runtime",
+            "type": "python",
+            "path": "./tools/onnx_baseline.py",
+            "enabled": False,
+            "required": False
+        },
+        {
+            "name": "llama.cpp",
+            "type": "python",
+            "path": "./tools/llama_baseline.py",
+            "enabled": True,
+            "required": False
+        }
     ]
 
-    runs_json_path = "./docs/performance_testing/runs.json"
+    for engine in engines:
+        if not engine["enabled"]:
+            continue
+            
+        executable_path = engine["path"]
+        engine_name = engine["name"]
+        
+        if not os.path.exists(executable_path):
+            if engine.get("required"):
+                print(f"Error: {executable_path} not found for {engine_name}. Please build the project or install prerequisites.")
+                sys.exit(1)
+            else:
+                print(f"Warning: {executable_path} not found. Skipping {engine_name} baseline.")
+                continue
 
-    print(f">>> Running Custom C++ Engine...")
-    try:
-        subprocess.run(cpp_command, check=True)
-        print(">>> C++ Engine Benchmark Complete.\n")
-        update_runs_json(runs_json_path, session_id, "Custom CPP")
-    except subprocess.CalledProcessError as e:
-        print(f"Error: C++ Engine failed with exit code {e.returncode}")
-
-    # 2. Run HuggingFace Baseline
-    python_executable = sys.executable
-    hf_script = "./tools/hf_baseline.py"
-    if os.path.exists(hf_script):
-        hf_command = [
-            python_executable, hf_script,
+        command = []
+        if engine["type"] == "python":
+            command.append(python_executable)
+        command.append(executable_path)
+        
+        command.extend([
             "--dataset-dir", args.dataset_dir,
             "--batch-size", str(args.batch_size),
             "--max-new-tokens", str(args.max_new_tokens),
             "--output-dir", output_dir,
             "--session-id", session_id
-        ]
-        print(f">>> Running HuggingFace Baseline...")
+        ])
+
+        print(f">>> Running {engine_name}...")
         try:
-            subprocess.run(hf_command, check=True)
-            print(">>> HF Benchmark Complete.\n")
-            update_runs_json(runs_json_path, session_id, "HuggingFace")
+            subprocess.run(command, check=True)
+            print(f">>> {engine_name} Benchmark Complete.\n")
+            update_runs_json(runs_json_path, session_id, engine_name)
         except subprocess.CalledProcessError as e:
-            print(f"Error: HF Baseline failed with exit code {e.returncode}")
-    else:
-        print(f"Warning: {hf_script} not found. Skipping HuggingFace baseline.")
-
-    # 3. Run vLLM Baseline (Commented out due to sm_61 incompatibility)
-    # vllm_script = "./tools/vllm_baseline.py"
-    # if os.path.exists(vllm_script):
-    #     vllm_command = [
-    #         python_executable, vllm_script,
-    #         "--dataset-dir", args.dataset_dir,
-    #         "--batch-size", str(args.batch_size),
-    #         "--max-new-tokens", str(args.max_new_tokens),
-    #         "--output-dir", output_dir,
-    #         "--session-id", session_id
-    #     ]
-    #     print(f">>> Running vLLM Baseline...")
-    #     try:
-    #         subprocess.run(vllm_command, check=True)
-    #         print(">>> vLLM Benchmark Complete.\n")
-    #         update_runs_json(runs_json_path, session_id, "vLLM")
-    #     except subprocess.CalledProcessError as e:
-    #         print(f"Error: vLLM Baseline failed with exit code {e.returncode}")
-
-    # 4. Run CTranslate2
-    ct2_script = "./tools/ct2_baseline.py"
-    if os.path.exists(ct2_script):
-        ct2_command = [
-            python_executable, ct2_script,
-            "--dataset-dir", args.dataset_dir,
-            "--batch-size", str(args.batch_size),
-            "--max-new-tokens", str(args.max_new_tokens),
-            "--output-dir", output_dir,
-            "--session-id", session_id
-        ]
-        print(f">>> Running CTranslate2 Baseline...")
-        try:
-            subprocess.run(ct2_command, check=True)
-            print(">>> CTranslate2 Benchmark Complete.\n")
-            update_runs_json(runs_json_path, session_id, "CTranslate2")
-        except subprocess.CalledProcessError as e:
-            print(f"Error: CTranslate2 Baseline failed with exit code {e.returncode}")
-
-    # 5. Run ONNX Runtime
-    # onnx_script = "./tools/onnx_baseline.py"
-    # if os.path.exists(onnx_script):
-    #     onnx_command = [
-    #         python_executable, onnx_script,
-    #         "--dataset-dir", args.dataset_dir,
-    #         "--batch-size", str(args.batch_size),
-    #         "--max-new-tokens", str(args.max_new_tokens),
-    #         "--output-dir", output_dir,
-    #         "--session-id", session_id
-    #     ]
-    #     print(f">>> Running ONNX Runtime Baseline...")
-    #     try:
-    #         subprocess.run(onnx_command, check=True)
-    #         print(">>> ONNX Benchmark Complete.\n")
-    #         update_runs_json(runs_json_path, session_id, "ONNX Runtime")
-    #     except subprocess.CalledProcessError as e:
-    #         print(f"Error: ONNX Baseline failed with exit code {e.returncode}")
-
-    # 6. Run llama.cpp
-    llama_script = "./tools/llama_baseline.py"
-    if os.path.exists(llama_script):
-        llama_command = [
-            python_executable, llama_script,
-            "--dataset-dir", args.dataset_dir,
-            "--batch-size", str(args.batch_size),
-            "--max-new-tokens", str(args.max_new_tokens),
-            "--output-dir", output_dir,
-            "--session-id", session_id
-        ]
-        print(f">>> Running llama.cpp Baseline...")
-        try:
-            subprocess.run(llama_command, check=True)
-            print(">>> llama.cpp Benchmark Complete.\n")
-            update_runs_json(runs_json_path, session_id, "llama.cpp")
-        except subprocess.CalledProcessError as e:
-            print(f"Error: llama.cpp Baseline failed with exit code {e.returncode}")
+            print(f"Error: {engine_name} failed with exit code {e.returncode}")
 
 if __name__ == "__main__":
     main()
