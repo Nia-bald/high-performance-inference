@@ -11,7 +11,7 @@ void log_layer_profile_csv(const std::string& layer_name, int batch_size, int se
     std::lock_guard<std::mutex> lock(csv_mutex);
     
     if (!is_file_initialized) {
-        csv_file.open("layer_profile.csv", std::ios::out);
+        csv_file.open("docs/performance_testing/layer_profile.csv", std::ios::out);
         if (csv_file.is_open()) {
             csv_file << "LayerName,BatchSize,SeqLen,Time_ms\n";
         }
