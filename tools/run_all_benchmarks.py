@@ -57,7 +57,7 @@ def main():
     parser = argparse.ArgumentParser(description="Multi-Engine Inference Benchmark Orchestrator")
     parser.add_argument("--dataset-dir", type=str, default="./dataset/input", help="Path to input prompts")
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size for benchmark")
-    parser.add_argument("--max-new-tokens", type=int, default=50, help="Max new tokens to generate")
+    parser.add_argument("--max-new-tokens", type=int, default=128, help="Max new tokens to generate")
     args = parser.parse_args()
 
     session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
