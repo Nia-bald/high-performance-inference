@@ -43,7 +43,6 @@ void run_case(const char* label, int M, int N, int K, GPUMemoryArena& arena) {
     cudaMemcpy(d_B, h_B.data(), K*N*sizeof(float), cudaMemcpyHostToDevice);
 
     double ms = measure_gpu_ms([&](){
-        cudaMemset(d_C, 0, M*N*sizeof(float));
         kernels::launch_gemm_tiled(d_A, d_B, d_C, M, N, K, 0);
     });
 
