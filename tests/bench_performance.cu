@@ -16,7 +16,7 @@
 #include "batch_executor_orchestrator.hpp"
 #include "benchmark_config.hpp"
 namespace fs = std::filesystem;
-
+//cmake --build build --target bench_performance -j$(nproc) 
 #define CUDA_CHECK(call) \
     do { \
         cudaError_t err = call; \
