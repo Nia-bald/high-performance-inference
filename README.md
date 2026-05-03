@@ -17,13 +17,24 @@ This engine takes the opposite approach: every CUDA kernel, every memory allocat
 
 | Metric | Current |
 |---|---|
-| **Prefill Throughput** | ~947 tok/s |
-| **Decode Throughput** | ~7 tok/s |
-| **TTFT (79 tokens)** | ~83 ms |
+| **Prefill Throughput** | ~2,077 tok/s |
+| **Decode Throughput** | ~21 tok/s |
+| **TTFT (79 tokens)** | ~38 ms |
 | **Weight Memory** | 622 MB / 632 MB (98.4%) |
 | **Scratch Memory** | 1136 MB |
 
-> These numbers are from the built-in benchmark suite running a 79-token prompt. Decode throughput is currently without KV cache — every token recomputes the full sequence attention. This is the primary optimization target.
+> These numbers are from the built-in benchmark suite running a 79-token prompt (May 2026). Decode throughput is currently without KV cache — every token recomputes the full sequence attention. This is the primary optimization target.
+
+### GEMM Kernel Performance
+
+The GEMM kernel uses **register tiling** (64×64 block tile, 8×8 thread tile per thread) to maximize arithmetic intensity. Benchmark results on real transformer shapes:
+
+| Case | GFLOP/s | vs cuBLAS | vs Peak |
+|---|---|---|---|
+| FF Up (79×3072×768) | 592 | 53.8% | 20.2% |
+| FF Down (79×768×3072) | 537 | 48.6% | 18.3% |
+| QKV Projection (79×768×768) | 509 | 57.9% | 17.3% |
+| Square 1024×1024 | 979 | 57.7% | 33.3% |
 
 ### Multi-Engine Comparison
 
@@ -101,7 +112,7 @@ Below is the latest performance comparison between this Custom C++ engine, Huggi
 │   └── model_config.hpp            # Hyperparameter struct
 ├── src/
 │   ├── kernels/                    # CUDA kernel implementations
-│   │   ├── gemm.cu                 #   Tiled GEMM
+│   │   ├── gemm.cu                 #   Register-tiled GEMM (64×64 block, 8×8 thread tile)
 │   │   ├── batched_gemm.cu         #   Batched GEMM (attention scores)
 │   │   ├── softmax.cu              #   Numerically stable softmax
 │   │   ├── layernorm.cu            #   Warp-intrinsic LayerNorm
@@ -192,9 +203,9 @@ make -j$(nproc)
  brilliant mathematician, and he was a great friend of mine.
 
 --- Performance Metrics ---
-Prefill Time:  18.29 ms (218.68 tok/s)
-Decode Time:   392.78 ms (48.37 tok/s) for 19 tokens
-Total Time:    411.07 ms
+Prefill Time:  38.03 ms (2077 tok/s)
+Decode Time:   5973.8 ms (21.3 tok/s) for 128 tokens
+Total Time:    6011.9 ms
 ```
 
 ## Benchmark Suite
@@ -216,8 +227,9 @@ cat docs/performance_testing/run_*/summary_*.txt
 
 ## Roadmap
 
-The primary bottleneck is decode throughput (~30 tok/s). Key optimizations planned:
+The primary bottleneck is decode throughput (~21 tok/s). Key optimizations planned:
 
+- [x] **Register-Tiled GEMM** — 3× speedup over textbook shared-memory tiling by having each thread compute an 8×8 sub-tile in registers (achieving ~58% of cuBLAS on square matrices).
 - [ ] **KV Cache** — Avoid recomputing attention over the full sequence at each decode step. This is the single biggest win available.
 - [ ] **Kernel Fusion** — Fuse LayerNorm + QKV projection, bias + GELU, and other adjacent operations to reduce memory bandwidth pressure and kernel launch overhead.
 - [ ] **Memory-Efficient Attention** — Reduce the O(S²) attention memory footprint to enable longer sequences within 4GB VRAM.

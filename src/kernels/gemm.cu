@@ -1,82 +1,143 @@
 #include "kernels.cuh"
 #include "memory.h"
 
+// ============================================================
+// Register-Tiled SGEMM
+// ============================================================
+// Block tile:  BM × BN elements of C, computed by (BM/TM)×(BN/TN) threads.
+// Thread tile: each thread accumulates a TM × TN sub-tile in registers.
+// K-dimension is walked in steps of BK.
+//
+// Parameters chosen for GTX 1050 Ti (SM 6.1, 48 KB smem, 65536 regs/SM):
+//   BM=64, BN=64, BK=8, TM=8, TN=8  →  64 threads/block, 4 KB smem
+// ============================================================
 
-#define TILE_SIZE 16
+#define BM 64 //total output elements of C in M direction per block
+#define BN 64 //total output elements of C in N direction per block
+#define BK 8  //total share mem load of A nad B in K direction per block
+#define TM 8  // same thing but per thread
+#define TN 8  // same ..
 
 namespace kernels {
 
-    __global__ void perform_tiled_gmm(
-            const float* A,  // [M, K]
-            const float* B,  // [K, N]
-            float* C, // [M, N]
-            int M, int N, int K
-        ){
-            size_t row = blockIdx.y * blockDim.y + threadIdx.y;
-            size_t col = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void gemm_register_tiled(
+    const float* __restrict__ A,  // [M, K]
+    const float* __restrict__ B,  // [K, N]
+    float* __restrict__ C,        // [M, N]
+    int M, int N, int K
+) {
+    // ---- Thread identity within the block ----
+    // Block has (BM/TM) × (BN/TN) = 8×8 = 64 threads, indexed 1-D.
+    const int threadRow = threadIdx.x / (BN / TN);  // 0..7  (row of thread tiles)
+    const int threadCol = threadIdx.x % (BN / TN);  // 0..7  (col of thread tiles)
 
+    // ---- Shared-memory tiles ----
+    __shared__ float smA[BM][BK];   // 64 × 8
+    __shared__ float smB[BK][BN];   // 8 × 64
 
-            __shared__ float shared_A[TILE_SIZE][TILE_SIZE];
-            __shared__ float shared_B[TILE_SIZE][TILE_SIZE];
+    // ---- Register accumulators (TM × TN = 64 floats) ----
+    float accum[TM][TN] = {};
+    float rA[TM], rB[TN];
 
+    // ---- Global offsets for this block ----
+    const int bRow = blockIdx.y * BM;
+    const int bCol = blockIdx.x * BN;
 
-            float total = 0.0f;
-            for (size_t tile{}; tile <  (K + TILE_SIZE-1)/TILE_SIZE; ++tile){
+    // ---- Precompute load indices for coalesced access ----
+    // A tile (BM × BK): consecutive threads load consecutive columns.
+    //   64 threads, BK=8 cols ⇒ 8 threads per row, 8 rows per iteration, 8 iters.
+    const int ldA_col = threadIdx.x % BK;              // 0..7 within a row
+    const int ldA_rowBase = threadIdx.x / BK;           // which row-group (0..7)
+    constexpr int ldA_rowStride = 64 / BK;              // 8 rows per pass
 
-                if (row < M && tile*TILE_SIZE + threadIdx.x < K){ 
-                    shared_A[threadIdx.y][threadIdx.x] = A[row*K + tile*TILE_SIZE + threadIdx.x];
-                }
-                else{
-                    shared_A[threadIdx.y][threadIdx.x] = 0.0f;
-                }
+    // B tile (BK × BN): consecutive threads load consecutive columns.
+    //   64 threads, BN=64 cols ⇒ 1 thread per column, 1 row per iteration, 8 iters.
+    const int ldB_col = threadIdx.x;                    // 0..63
+    // ldB_row iterated 0..BK-1
 
+    // ---- Main loop over K in steps of BK ----
+    for (int tile = 0; tile < K; tile += BK) {
 
-                if (col < N && tile*TILE_SIZE + threadIdx.y < K){ 
-                    shared_B[threadIdx.y][threadIdx.x] = B[(tile*TILE_SIZE + threadIdx.y)*N + col];
-                }
-                else{
-                    shared_B[threadIdx.y][threadIdx.x] = 0.0f;
-                }
+        // -- Load A tile (BM × BK) into smA, coalesced --
+        #pragma unroll
+        for (int r = 0; r < BM; r += ldA_rowStride) {
+            int row = r + ldA_rowBase;
+            int gRow = bRow + row;
+            int gCol = tile + ldA_col;
+            smA[row][ldA_col] = (gRow < M && gCol < K)
+                ? A[gRow * K + gCol] : 0.0f;
+        }
 
-                __syncthreads();
+        // -- Load B tile (BK × BN) into smB, coalesced --
+        #pragma unroll
+        for (int r = 0; r < BK; ++r) {
+            int gRow = tile + r;
+            int gCol = bCol + ldB_col;
+            smB[r][ldB_col] = (gRow < K && gCol < N)
+                ? B[gRow * N + gCol] : 0.0f;
+        }
 
+        __syncthreads();
+
+        // -- Register-tiled compute: outer products over BK --
+        #pragma unroll
+        for (int k = 0; k < BK; ++k) {
+            // Load A column fragment into registers
+            #pragma unroll
+            for (int i = 0; i < TM; ++i)
+                rA[i] = smA[threadRow * TM + i][k];
+
+            // Load B row fragment into registers
+            #pragma unroll
+            for (int j = 0; j < TN; ++j)
+                rB[j] = smB[k][threadCol * TN + j];
+
+            // Rank-1 update
+            #pragma unroll
+            for (int i = 0; i < TM; ++i)
                 #pragma unroll
-                for (size_t k{}; k < TILE_SIZE; ++k){
-                    total += shared_A[threadIdx.y][k]*shared_B[k][threadIdx.x];
-                }
-
-                __syncthreads();
-            }
-
-            if (row < M && col < N){
-                C[row*N + col] = total;
-            }
-
+                for (int j = 0; j < TN; ++j)
+                    accum[i][j] += rA[i] * rB[j];
         }
 
-    void launch_gemm_tiled(
-        const float* A,  // [M, K]
-        const float* B,  // [K, N]
-        float* C, // [M, N]
-        int M, int N, int K,
-        cudaStream_t stream
-    ){
-        dim3 blockDim(TILE_SIZE, TILE_SIZE);
-
-        // grid size needs to be floor  floor N/T and floor M/T because the number of threads should match the number elements  in MXN
-        dim3 gridDim(
-            (N + TILE_SIZE - 1)/TILE_SIZE, // # of cols
-            (M + TILE_SIZE - 1)/TILE_SIZE // # of rows
-        );
-
-        perform_tiled_gmm<<<gridDim, blockDim, 0, stream>>>(A, B, C, M, N, K);
-
-        cudaError_t err = cudaGetLastError();
-
-        if (err != cudaSuccess){
-            printf("CUDA Error in GEMM: %s\n", cudaGetErrorString(err));
-        }
+        __syncthreads();
     }
 
-
+    // ---- Store TM × TN result tile to global memory ----
+    #pragma unroll
+    for (int i = 0; i < TM; ++i) {
+        int gRow = bRow + threadRow * TM + i;
+        if (gRow < M) {
+            #pragma unroll
+            for (int j = 0; j < TN; ++j) {
+                int gCol = bCol + threadCol * TN + j;
+                if (gCol < N)
+                    C[gRow * N + gCol] = accum[i][j];
+            }
+        }
+    }
 }
+
+void launch_gemm_tiled(
+    const float* A,  // [M, K]
+    const float* B,  // [K, N]
+    float* C,        // [M, N]
+    int M, int N, int K,
+    cudaStream_t stream
+) {
+    constexpr int THREADS = (BM / TM) * (BN / TN);  // 64
+    dim3 block(THREADS);
+    dim3 grid(
+        (N + BN - 1) / BN,
+        (M + BM - 1) / BM
+    );
+
+    gemm_register_tiled<<<grid, block, 0, stream>>>(A, B, C, M, N, K);
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA Error in GEMM: %s\n", cudaGetErrorString(err));
+    }
+}
+
+} // namespace kernels
