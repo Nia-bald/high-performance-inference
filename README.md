@@ -1,4 +1,4 @@
-# Transformer Inference Engine
+# Transformer Inference Engine 
 
 A from-scratch GPT-2 inference engine written in C++/CUDA, purpose-built to maximize token throughput on a **single NVIDIA GTX 1050 Ti** (4GB VRAM, 768 CUDA cores, Pascal SM 6.1).
 
