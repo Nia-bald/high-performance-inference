@@ -124,4 +124,18 @@ namespace kernels {
         int row_stride = 0,
         cudaStream_t stream = 0
     );
+
+    // KV Cache: Scatter-append new K/V vectors into cache slots
+    // src:   [batch_size, num_heads, head_dim]
+    // cache: [batch_size, num_heads, max_seq_len, head_dim]
+    void launch_cache_append(
+        const float* src,
+        float* cache,
+        int pos,
+        int batch_size,
+        int num_heads,
+        int max_seq_len,
+        int head_dim,
+        cudaStream_t stream = 0
+    );
 }

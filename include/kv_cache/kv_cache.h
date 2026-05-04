@@ -24,11 +24,11 @@ public:
     virtual void append_v(int layer, const float* d_v_new, cudaStream_t stream) = 0;
 
     // --- Data Reading (Layout Agnostic) ---
-    // Returns pointer to a specific head's K/V history for a layer.
+    // Returns pointer to a specific (batch, head)'s K/V history for a layer.
     // The returned pointer addresses [max_seq_len, head_dim] contiguous floats,
     // but only entries [0..current_pos-1] are valid.
-    virtual float* k_head(int layer, int head) = 0;
-    virtual float* v_head(int layer, int head) = 0;
+    virtual float* k_head(int layer, int batch, int head) = 0;
+    virtual float* v_head(int layer, int batch, int head) = 0;
 
     // --- Position Tracking ---
     // Position = number of tokens whose K,V have been written into the cache.
