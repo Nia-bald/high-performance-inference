@@ -6,7 +6,7 @@
 GPUMemoryArena::GPUMemoryArena(size_t size):total_size(size){
     cudaError_t err = cudaMalloc(&base_ptr, total_size);
     if (err != cudaSuccess){
-        throw std::runtime_error("Failed ti allocate GPU Arena: " 
+        throw std::runtime_error("Failed to allocate GPU Arena: " 
             + std::string(cudaGetErrorString(err)));
     }
     std::cout << "[GPU Arena] Allocated" << total_size/1024/1024 << "MB\n";

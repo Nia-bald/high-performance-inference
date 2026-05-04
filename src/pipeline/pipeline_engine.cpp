@@ -17,7 +17,7 @@ PipelineEngine::PipelineEngine(Transformer& model, GPT2Tokenizer& tokenizer, GPU
     d_logits = inference_arena.allocate<float>(max_batch_size * max_seq_len * vocab_size);
     d_next_tokens = inference_arena.allocate<int>(max_batch_size);
 
-    persistent_offset = inference_arena.get_user();
+    persistent_offset = inference_arena.get_used();
 }
 
 int PipelineEngine::pad_and_pack(const std::vector<std::vector<int>>& sequences, std::vector<int>& packed) const {
