@@ -22,7 +22,7 @@ Transformer::Transformer(int vocab_size, int max_seq_len, int d_model, int num_h
 
     // 2. Create Blocks
     for (int i = 0; i < num_layers; ++i) {
-        layers.push_back(new TransformerBlock(d_model, num_heads, d_ff, weights_arena));
+        layers.push_back(new TransformerBlock(d_model, num_heads, d_ff, i, weights_arena));
         if ((i + 1) % 3 == 0 || i == num_layers - 1) {
             printf("[Transformer] Created %d/%d blocks: %.2f MB used, %.2f%% full\n", 
                    i + 1, num_layers, weights_arena.get_used() / (1024.0 * 1024.0), 
@@ -40,7 +40,7 @@ Transformer::Transformer(int vocab_size, int max_seq_len, int d_model, int num_h
 // --- Forward Pass ---
 void Transformer::forward(const int* d_token_ids, float* d_logits, 
     int current_batch_size, int current_seq_len,
-    GPUMemoryArena& inference_arena, cudaStream_t stream) 
+    GPUMemoryArena& inference_arena, cudaStream_t stream, IKVCache* kv_cache) 
 {
     size_t state_size = current_batch_size * current_seq_len * d_model;
 
@@ -62,8 +62,8 @@ void Transformer::forward(const int* d_token_ids, float* d_logits,
     // 3. Layers Loop (Ping-Pong)
     for (int i = 0; i < num_layers; ++i) {
 
-    // Run Layer: Read from d_in, Write to d_out
-    layers[i]->forward(d_in, d_out, current_batch_size, current_seq_len, &inference_arena, stream);
+    // Run Layer: Read from d_in, Write to d_out — pass kv_cache through
+    layers[i]->forward(d_in, d_out, current_batch_size, current_seq_len, &inference_arena, stream, kv_cache);
 
     // Optimization: Reset the arena to free specific "intra-layer" scratch memory 
     // (like Q, K, V projections) that isn't needed for the next layer.

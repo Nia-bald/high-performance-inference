@@ -29,7 +29,7 @@ void FeedForward::load_weights(const float* h_W_up, const float* h_b_up,
 }
 
 // --- Forward Pass ---
-void FeedForward::forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream) 
+void FeedForward::forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream, IKVCache* /*kv_cache*/) 
 {
     // Total number of tokens to process
     int total_rows = batch_size * seq_len;

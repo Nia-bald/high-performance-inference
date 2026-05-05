@@ -20,8 +20,8 @@ static void log_tensor_sample(const char* stage, const float* d_data, size_t tot
 }
 
 
-SelfAttention::SelfAttention(int d_model, int num_heads, GPUMemoryArena& weights_arena, int qk_dim, int v_dim)
-    : Layer("SelfAttention"), d_model(d_model), num_heads(num_heads){
+SelfAttention::SelfAttention(int d_model, int num_heads, int layer_index, GPUMemoryArena& weights_arena, int qk_dim, int v_dim)
+    : Layer("SelfAttention"), d_model(d_model), num_heads(num_heads), layer_index_(layer_index){
 
 
     if (qk_dim == 0){
@@ -63,7 +63,7 @@ SelfAttention::SelfAttention(int d_model, int num_heads, GPUMemoryArena& weights
 }
 
 
-void SelfAttention::forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream){
+void SelfAttention::forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream, IKVCache* kv_cache){
     
     size_t qk_proj_size = batch_size*seq_len*this->total_qk_dim;
     
