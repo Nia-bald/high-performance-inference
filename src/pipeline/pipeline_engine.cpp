@@ -53,6 +53,9 @@ void PipelineEngine::run_prefill(GenerationResult& result, const GenerationConfi
 
     inference_arena.reset_to(persistent_offset);
 
+    // Reset cache for new generation
+    kv_cache_->reset();
+
     // Pad and pack all sequences into a flat tensor
     std::vector<int> packed;
     int padded_seq_len = pad_and_pack(result.output_sequences, packed);
@@ -78,6 +81,9 @@ void PipelineEngine::run_prefill(GenerationResult& result, const GenerationConfi
         result.output_sequences[b].push_back(next_tokens[b]);
     }
     result.metrics.generated_tokens += batch_size;
+
+    // Mark cache position after prefill
+    kv_cache_->set_pos(padded_seq_len);
 }
 
 void PipelineEngine::run_decode(GenerationResult& result, const GenerationConfig& config) {
@@ -117,6 +123,9 @@ void PipelineEngine::run_decode(GenerationResult& result, const GenerationConfig
             result.output_sequences[b].push_back(next_tokens[b]);
         }
         result.metrics.generated_tokens += batch_size;
+
+        // Advance cache position after each decode step
+        kv_cache_->advance();
     }
 }
 
