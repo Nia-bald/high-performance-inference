@@ -1,4 +1,5 @@
 #include "attention.h"
+#include "kv_cache/kv_cache.h"
 #include <cmath>
 #include <cstdio>
 #include <cuda_runtime.h>
@@ -64,6 +65,18 @@ SelfAttention::SelfAttention(int d_model, int num_heads, int layer_index, GPUMem
 
 
 void SelfAttention::forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream, IKVCache* kv_cache){
+
+    // ===================================================================
+    // PREFILL/DECODE PATH
+    // 
+    // Phase 1 (current): Cache is populated during forward pass, but
+    //   attention always uses the freshly-computed K/V (full recomputation).
+    //   This is functionally correct but doesn't yet give O(N) decode speedup.
+    //
+    // Phase 2 (TODO): Decode path (seq_len==1) reads from cache instead 
+    //   of recomputing, giving the O(N) speedup. Requires a dedicated
+    //   kernel for q[1,hd] × K_cache[pos,hd]^T attention.
+    // ===================================================================
     
     size_t qk_proj_size = batch_size*seq_len*this->total_qk_dim;
     
@@ -80,6 +93,11 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
     kernels::launch_bias_add(d_K, this->d_b_k, batch_size*seq_len, this->total_qk_dim, stream);
     log_tensor_sample("K projection", d_K, qk_proj_size, stream);
 
+    // Write K/V to cache during prefill if cache is available
+    if (kv_cache != nullptr) {
+        kv_cache->append_k(layer_index_, d_K, stream);
+    }
+
     float* d_K_transpose = inference_arena->allocate<float>(qk_proj_size);
     kernels::launch_transpose(d_K, d_K_transpose, batch_size*seq_len, this->total_qk_dim, stream);
     log_tensor_sample("K transpose", d_K_transpose, qk_proj_size, stream);
@@ -88,6 +106,10 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
     kernels::launch_gemm_tiled(d_input, this->d_W_v, d_V, batch_size*seq_len, this->total_qk_dim, this->d_model, stream);
     kernels::launch_bias_add(d_V, this->d_b_v, batch_size*seq_len, this->total_qk_dim, stream);
     log_tensor_sample("V projection", d_V, qk_proj_size, stream);
+
+    if (kv_cache != nullptr) {
+        kv_cache->append_v(layer_index_, d_V, stream);
+    }
 
     float* d_attention = inference_arena->allocate<float>(attention_size);
 
