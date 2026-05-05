@@ -3,6 +3,16 @@
 #include <cstdio>
 #include <cuda_runtime.h>
 
+// current memory layout explained SHOULD BE OPTIMIZED FOR EASY ACCESS
+// <----------------------layer1-------------------------->
+// <--------batch 1------------><----------batch2---------> 
+// <--head1-----><--head2------><--head1-----><--head2------>
+// [-max_seq*hd-][--max_seq*hd-][-max_seq*hd-][-max_seq*hd-]
+// zoom in on single head
+// <------------------------head-------------------------->
+// <----tok1-------><-----tok2-------><--------tok3------->
+// [--head_dim-----][--head_dim------][------head_dim-----]
+
 // -------------------------------------------------------------------
 // Constructor
 // -------------------------------------------------------------------
