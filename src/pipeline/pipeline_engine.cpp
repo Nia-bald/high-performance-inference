@@ -1,4 +1,5 @@
 #include "pipeline/pipeline_engine.hpp"
+#include "kv_cache/contiguous_kv_cache.h"
 #include <iostream>
 #include <algorithm>
 
@@ -16,6 +17,12 @@ PipelineEngine::PipelineEngine(Transformer& model, GPT2Tokenizer& tokenizer, GPU
     d_input_ids = inference_arena.allocate<int>(max_batch_size * max_seq_len);
     d_logits = inference_arena.allocate<float>(max_batch_size * max_seq_len * vocab_size);
     d_next_tokens = inference_arena.allocate<int>(max_batch_size);
+
+    // Allocate KV cache (persistent — lives for the entire generation session)
+    kv_cache_ = KVCacheFactory::create_contiguous(
+        model.get_num_layers(), model.get_num_heads(), max_seq_len,
+        model.get_d_model() / model.get_num_heads(),  // head_dim
+        max_batch_size, inference_arena);
 
     persistent_offset = inference_arena.get_used();
 }
@@ -52,7 +59,7 @@ void PipelineEngine::run_prefill(GenerationResult& result, const GenerationConfi
 
     cudaMemcpyAsync(d_input_ids, packed.data(), batch_size * padded_seq_len * sizeof(int), cudaMemcpyHostToDevice, stream);
 
-    model.forward(d_input_ids, d_logits, batch_size, padded_seq_len, inference_arena, stream);
+    model.forward(d_input_ids, d_logits, batch_size, padded_seq_len, inference_arena, stream, kv_cache_.get());
 
     // Argmax on last token's logits for each sequence in the batch
     // For each sequence b, the last valid logits are at position (seq_len_b - 1)
@@ -95,7 +102,7 @@ void PipelineEngine::run_decode(GenerationResult& result, const GenerationConfig
 
         cudaMemcpyAsync(d_input_ids, packed.data(), batch_size * padded_seq_len * sizeof(int), cudaMemcpyHostToDevice, stream);
 
-        model.forward(d_input_ids, d_logits, batch_size, padded_seq_len, inference_arena, stream);
+        model.forward(d_input_ids, d_logits, batch_size, padded_seq_len, inference_arena, stream, kv_cache_.get());
 
         // Argmax on last position for each sequence
         float* last_logits = d_logits + (padded_seq_len - 1) * vocab_size;

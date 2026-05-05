@@ -5,7 +5,7 @@
 Transformer::Transformer(int vocab_size, int max_seq_len, int d_model, int num_heads, int num_layers, int d_ff, 
                          GPUMemoryArena& weights_arena)
     : vocab_size(vocab_size), max_seq_len(max_seq_len), d_model(d_model), 
-      num_layers(num_layers), final_norm(d_model, weights_arena)
+      num_heads(num_heads), num_layers(num_layers), final_norm(d_model, weights_arena)
 {
     // 1. Allocate Weights
     d_token_embedding_table = weights_arena.allocate<float>(vocab_size * d_model);

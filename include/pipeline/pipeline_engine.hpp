@@ -4,7 +4,9 @@
 #include "transformer.h"
 #include "tokenizer.h"
 #include "memory.h"
+#include "kv_cache/kv_cache.h"
 #include <vector>
+#include <memory>
 
 namespace pipeline {
 
@@ -32,6 +34,7 @@ private:
     int* d_input_ids;
     float* d_logits;
     int* d_next_tokens;  // one per sequence in batch
+    std::unique_ptr<IKVCache> kv_cache_;
     size_t persistent_offset;
 
     // Helper: pad sequences to uniform length and pack into flat buffer

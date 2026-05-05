@@ -122,6 +122,8 @@ public:
     int get_vocab_size() const { return vocab_size; }
     int get_max_seq_len() const { return max_seq_len; }
     int get_d_model() const { return d_model; }
+    int get_num_layers() const { return num_layers; }
+    int get_num_heads() const { return num_heads; }
 
 
 private:
@@ -129,6 +131,7 @@ private:
     int max_seq_len;
     int vocab_size;
     int num_layers;
+    int num_heads;
     int batch_size; // Needed for internal sizing
 
     // Embeddings
