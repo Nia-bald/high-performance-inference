@@ -138,4 +138,18 @@ namespace kernels {
         int head_dim,
         cudaStream_t stream = 0
     );
+
+    // KV Cache: Gather valid entries from cache into flat buffer
+    // cache:  [batch_size, num_heads, max_seq_len, head_dim]
+    // output: [batch_size * pos, num_heads * head_dim]
+    void launch_cache_gather(
+        const float* cache,
+        float* output,
+        int pos,
+        int batch_size,
+        int num_heads,
+        int max_seq_len,
+        int head_dim,
+        cudaStream_t stream = 0
+    );
 }

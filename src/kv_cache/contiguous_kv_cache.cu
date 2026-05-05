@@ -64,6 +64,8 @@ float* ContiguousKVCache::v_head(int layer, int batch, int head) {
                             + head * max_seq_len_ * head_dim_;
 }
 
+float* ContiguousKVCache::k_cache_base(int layer) { return k_caches_[layer]; }
+float* ContiguousKVCache::v_cache_base(int layer) { return v_caches_[layer]; }
 // -------------------------------------------------------------------
 // Position tracking
 // -------------------------------------------------------------------

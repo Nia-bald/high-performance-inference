@@ -30,6 +30,12 @@ public:
     virtual float* k_head(int layer, int batch, int head) = 0;
     virtual float* v_head(int layer, int batch, int head) = 0;
 
+    // Returns the raw base pointer for a layer's K/V cache.
+    // Layout: [batch_size, num_heads, max_seq_len, head_dim]
+    // Used by gather kernels that need the full contiguous slab.
+    virtual float* k_cache_base(int layer) = 0;
+    virtual float* v_cache_base(int layer) = 0;
+
     // --- Position Tracking ---
     // Position = number of tokens whose K,V have been written into the cache.
     virtual int  current_pos() const = 0;

@@ -96,24 +96,25 @@ void PipelineEngine::run_decode(GenerationResult& result, const GenerationConfig
         // Re-use scratch memory for each step
         inference_arena.reset_to(persistent_offset);
 
-        // Pad and pack current state of all sequences
-        std::vector<int> packed;
-        int padded_seq_len = pad_and_pack(result.output_sequences, packed);
-
-        // Cap generation if any sequence would exceed max
-        if (padded_seq_len >= max_seq_len) {
+        // Cap generation if cache would exceed max
+        if (kv_cache_->current_pos() >= max_seq_len) {
             std::cerr << "Warning: Generation length reached maximum sequence length!" << std::endl;
             break;
         }
 
-        cudaMemcpyAsync(d_input_ids, packed.data(), batch_size * padded_seq_len * sizeof(int), cudaMemcpyHostToDevice, stream);
+        // Pack only the LAST token from each sequence (seq_len = 1)
+        std::vector<int> last_tokens(batch_size);
+        for (int b = 0; b < batch_size; ++b) {
+            last_tokens[b] = result.output_sequences[b].back();
+        }
 
-        model.forward(d_input_ids, d_logits, batch_size, padded_seq_len, inference_arena, stream, kv_cache_.get());
+        cudaMemcpyAsync(d_input_ids, last_tokens.data(), batch_size * sizeof(int), cudaMemcpyHostToDevice, stream);
 
-        // Argmax on last position for each sequence
-        float* last_logits = d_logits + (padded_seq_len - 1) * vocab_size;
-        int row_stride = padded_seq_len * vocab_size;
-        kernels::launch_argmax(last_logits, d_next_tokens, batch_size, 1, vocab_size, row_stride, stream);
+        // Forward with seq_len=1 — attention uses cached K/V
+        model.forward(d_input_ids, d_logits, batch_size, /*seq_len=*/1, inference_arena, stream, kv_cache_.get());
+
+        // Argmax on the single token's logits (no stride needed, seq_len=1)
+        kernels::launch_argmax(d_logits, d_next_tokens, batch_size, 1, vocab_size, /*row_stride=*/0, stream);
 
         std::vector<int> next_tokens(batch_size);
         cudaMemcpyAsync(next_tokens.data(), d_next_tokens, batch_size * sizeof(int), cudaMemcpyDeviceToHost, stream);

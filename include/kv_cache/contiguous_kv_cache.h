@@ -22,6 +22,9 @@ public:
     float* k_head(int layer, int batch, int head) override;
     float* v_head(int layer, int batch, int head) override;
 
+    float* k_cache_base(int layer) override;
+    float* v_cache_base(int layer) override;
+
     int  current_pos() const override;
     void set_pos(int pos) override;
     void advance() override;
