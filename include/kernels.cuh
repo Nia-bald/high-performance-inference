@@ -12,7 +12,8 @@ namespace kernels {
         int batch_size, 
         int current_seq_len, // Passed from forward()
         int d_model, 
-        cudaStream_t stream = 0);
+        cudaStream_t stream = 0,
+        int start_pos = 0);
 
     void launch_layer_norm(
         const float* input, // [Batch size, seq_len, hidden_dim] (would be heap allocated as it could be huge)
@@ -126,12 +127,13 @@ namespace kernels {
     );
 
     // KV Cache: Scatter-append new K/V vectors into cache slots
-    // src:   [batch_size, num_heads, head_dim]
+    // src:   [batch_size, seq_len, num_heads, head_dim]
     // cache: [batch_size, num_heads, max_seq_len, head_dim]
     void launch_cache_append(
         const float* src,
         float* cache,
         int pos,
+        int seq_len,
         int batch_size,
         int num_heads,
         int max_seq_len,

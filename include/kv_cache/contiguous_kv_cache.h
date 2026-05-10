@@ -16,8 +16,8 @@ public:
                       int head_dim, int batch_size, GPUMemoryArena& arena);
 
     // --- IKVCache interface ---
-    void append_k(int layer, const float* d_k_new, cudaStream_t stream) override;
-    void append_v(int layer, const float* d_v_new, cudaStream_t stream) override;
+    void append_k(int layer, const float* d_k_new, int seq_len, cudaStream_t stream) override;
+    void append_v(int layer, const float* d_v_new, int seq_len, cudaStream_t stream) override;
 
     float* k_head(int layer, int batch, int head) override;
     float* v_head(int layer, int batch, int head) override;

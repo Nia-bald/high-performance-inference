@@ -36,16 +36,16 @@ ContiguousKVCache::ContiguousKVCache(int num_layers, int num_heads, int max_seq_
 // -------------------------------------------------------------------
 // append_k / append_v — delegate to kernels::launch_cache_append
 // -------------------------------------------------------------------
-void ContiguousKVCache::append_k(int layer, const float* d_k_new, cudaStream_t stream) {
+void ContiguousKVCache::append_k(int layer, const float* d_k_new, int seq_len, cudaStream_t stream) {
     kernels::launch_cache_append(
         d_k_new, k_caches_[layer], current_pos_,
-        batch_size_, num_heads_, max_seq_len_, head_dim_, stream);
+        seq_len, batch_size_, num_heads_, max_seq_len_, head_dim_, stream);
 }
 
-void ContiguousKVCache::append_v(int layer, const float* d_v_new, cudaStream_t stream) {
+void ContiguousKVCache::append_v(int layer, const float* d_v_new, int seq_len, cudaStream_t stream) {
     kernels::launch_cache_append(
         d_v_new, v_caches_[layer], current_pos_,
-        batch_size_, num_heads_, max_seq_len_, head_dim_, stream);
+        seq_len, batch_size_, num_heads_, max_seq_len_, head_dim_, stream);
 }
 
 // -------------------------------------------------------------------

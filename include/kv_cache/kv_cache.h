@@ -17,11 +17,9 @@ public:
     virtual ~IKVCache() = default;
 
     // --- Data Writing (Layout Agnostic) ---
-    // Appends new K/V vectors for a single token at `current_pos`.
-    // d_k_new / d_v_new shape: [num_heads, head_dim]
-    // The strategy handles the scatter-copy to its internal layout.
-    virtual void append_k(int layer, const float* d_k_new, cudaStream_t stream) = 0;
-    virtual void append_v(int layer, const float* d_v_new, cudaStream_t stream) = 0;
+    // Appends new K/V vectors (shape: [batch_size, seq_len, total_qk_dim]) to the cache
+    virtual void append_k(int layer, const float* d_k_new, int seq_len, cudaStream_t stream) = 0;
+    virtual void append_v(int layer, const float* d_v_new, int seq_len, cudaStream_t stream) = 0;
 
     // --- Data Reading (Layout Agnostic) ---
     // Returns pointer to a specific (batch, head)'s K/V history for a layer.

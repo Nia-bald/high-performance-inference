@@ -1,4 +1,5 @@
 #include "transformer.h"
+#include "kv_cache/kv_cache.h"
 #include <cstdio>
 
 // --- Constructor ---
@@ -48,11 +49,13 @@ void Transformer::forward(const int* d_token_ids, float* d_logits,
     float* d_buffer_1 = inference_arena.allocate<float>(state_size); // Initial State
     float* d_buffer_2 = inference_arena.allocate<float>(state_size); // Scratchpad
 
+    int start_pos = (kv_cache != nullptr) ? kv_cache->current_pos() : 0;
+
     // 2. Embeddings -> Write to Buffer 1
     // d_buffer_1 now holds the initial embedding state
     kernels::launch_embedding_lookup(
     d_token_ids, d_token_embedding_table, d_pos_embedding_table, 
-    d_buffer_1, current_batch_size, current_seq_len, d_model, stream
+    d_buffer_1, current_batch_size, current_seq_len, d_model, stream, start_pos
     );
 
     // Pointers that we will swap

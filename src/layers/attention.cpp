@@ -90,8 +90,8 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
         kernels::launch_bias_add(d_v_new, this->d_b_v, batch_size, this->total_qk_dim, stream);
 
         // --- 2. Append new k, v to cache ---
-        kv_cache->append_k(layer_index_, d_k_new, stream);
-        kv_cache->append_v(layer_index_, d_v_new, stream);
+        kv_cache->append_k(layer_index_, d_k_new, 1, stream);
+        kv_cache->append_v(layer_index_, d_v_new, 1, stream);
 
         int total_tokens = pos + 1;  // valid entries after append
 
@@ -147,12 +147,12 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
 
         kernels::launch_batched_one_to_one_gemm_naive(
             d_scores, d_V_gathered, d_context,
-            batch_size,                    // M (total rows of scores)
-            this->total_qk_dim,            // N (total columns of V = total_qk_dim)
-            this->num_heads,               // K (num batched sub-problems along K axis)
-            total_tokens,                  // stride_A (cols per head in scores)
-            this->head_dim_qk,             // stride_B (cols per head in V)
-            1,                             // stride_K (rows per batch in scores = 1)
+            batch_size,                               // M (total rows of scores)
+            this->total_qk_dim,                       // N (total columns of V = total_qk_dim)
+            this->num_heads * total_tokens,           // K (num batched sub-problems along K axis)
+            1,                                        // stride_A (cols per head in scores, seq_len=1)
+            this->head_dim_qk,                        // stride_B (cols per head in V)
+            total_tokens,                             // stride_K (rows per batch in scores = total_tokens)
             stream);
 
         // --- 9. Output projection ---
@@ -184,7 +184,7 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
 
     // Write K/V to cache during prefill if cache is available
     if (kv_cache != nullptr) {
-        kv_cache->append_k(layer_index_, d_K, stream);
+        kv_cache->append_k(layer_index_, d_K, seq_len, stream);
     }
 
     float* d_K_transpose = inference_arena->allocate<float>(qk_proj_size);
@@ -197,7 +197,7 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
     log_tensor_sample("V projection", d_V, qk_proj_size, stream);
 
     if (kv_cache != nullptr) {
-        kv_cache->append_v(layer_index_, d_V, stream);
+        kv_cache->append_v(layer_index_, d_V, seq_len, stream);
     }
 
     float* d_attention = inference_arena->allocate<float>(attention_size);
