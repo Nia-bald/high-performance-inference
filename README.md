@@ -24,7 +24,7 @@ This engine takes the opposite approach: every CUDA kernel, every memory allocat
 | **Weight Memory** | 622 MB / 632 MB (98.4%) |
 | **KV Cache Memory** | 72 MB (12 layers) |
 | **Scratch Memory** | 1136 MB |
-
+ 
 > These numbers are from the built-in benchmark suite running a 79-token prompt generating 128 tokens (May 2026). Decode uses a contiguous KV cache — only the new token is projected and attended against cached K/V history each step, giving O(N) per-step compute instead of O(N²).
 
 ### GEMM Kernel Performance
