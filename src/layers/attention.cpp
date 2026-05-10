@@ -1,4 +1,5 @@
 #include "attention.h"
+#include "kv_cache/kv_cache.h"
 #include <cmath>
 #include <cstdio>
 #include <cuda_runtime.h>
@@ -20,8 +21,8 @@ static void log_tensor_sample(const char* stage, const float* d_data, size_t tot
 }
 
 
-SelfAttention::SelfAttention(int d_model, int num_heads, GPUMemoryArena& weights_arena, int qk_dim, int v_dim)
-    : Layer("SelfAttention"), d_model(d_model), num_heads(num_heads){
+SelfAttention::SelfAttention(int d_model, int num_heads, int layer_index, GPUMemoryArena& weights_arena, int qk_dim, int v_dim)
+    : Layer("SelfAttention"), d_model(d_model), num_heads(num_heads), layer_index_(layer_index){
 
 
     if (qk_dim == 0){
@@ -63,7 +64,108 @@ SelfAttention::SelfAttention(int d_model, int num_heads, GPUMemoryArena& weights
 }
 
 
-void SelfAttention::forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream){
+void SelfAttention::forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream, IKVCache* kv_cache){
+
+    // ===================================================================
+    // DECODE PATH: seq_len == 1 && kv_cache available
+    // Projects only the new token, appends to cache, then gathers the
+    // full K/V history from cache and runs attention against it.
+    // ===================================================================
+    if (kv_cache != nullptr && seq_len == 1) {
+        int pos = kv_cache->current_pos();  // entries already in cache
+
+        // --- 1. Project input → q, k_new, v_new (GEMV: M=1) ---
+        size_t proj_size = batch_size * this->total_qk_dim;
+
+        float* d_q = inference_arena->allocate<float>(proj_size);
+        kernels::launch_gemm_tiled(d_input, this->d_W_q, d_q, batch_size, this->total_qk_dim, this->d_model, stream);
+        kernels::launch_bias_add(d_q, this->d_b_q, batch_size, this->total_qk_dim, stream);
+
+        float* d_k_new = inference_arena->allocate<float>(proj_size);
+        kernels::launch_gemm_tiled(d_input, this->d_W_k, d_k_new, batch_size, this->total_qk_dim, this->d_model, stream);
+        kernels::launch_bias_add(d_k_new, this->d_b_k, batch_size, this->total_qk_dim, stream);
+
+        float* d_v_new = inference_arena->allocate<float>(proj_size);
+        kernels::launch_gemm_tiled(d_input, this->d_W_v, d_v_new, batch_size, this->total_qk_dim, this->d_model, stream);
+        kernels::launch_bias_add(d_v_new, this->d_b_v, batch_size, this->total_qk_dim, stream);
+
+        // --- 2. Append new k, v to cache ---
+        kv_cache->append_k(layer_index_, d_k_new, 1, stream);
+        kv_cache->append_v(layer_index_, d_v_new, 1, stream);
+
+        int total_tokens = pos + 1;  // valid entries after append
+
+        // --- 3. Gather full K, V from cache into flat buffers ---
+        // Output: [batch * total_tokens, total_qk_dim]
+        size_t gathered_size = batch_size * total_tokens * this->total_qk_dim;
+
+        float* d_K_gathered = inference_arena->allocate<float>(gathered_size);
+        kernels::launch_cache_gather(
+            kv_cache->k_cache_base(layer_index_), d_K_gathered,
+            total_tokens, batch_size, this->num_heads,
+            kv_cache->get_max_seq_len(), this->head_dim_qk, stream);
+
+        float* d_V_gathered = inference_arena->allocate<float>(gathered_size);
+        kernels::launch_cache_gather(
+            kv_cache->v_cache_base(layer_index_), d_V_gathered,
+            total_tokens, batch_size, this->num_heads,
+            kv_cache->get_max_seq_len(), this->head_dim_qk, stream);
+
+        // --- 4. Transpose K: [batch*total_tokens, total_qk] → [total_qk, batch*total_tokens] ---
+        float* d_K_gathered_T = inference_arena->allocate<float>(gathered_size);
+        kernels::launch_transpose(d_K_gathered, d_K_gathered_T, batch_size * total_tokens, this->total_qk_dim, stream);
+
+        // --- 5. Q × K^T: [batch, total_qk] × [total_qk, batch*total_tokens] ---
+        // Per head: q_h[1, hd] × K_h^T[hd, total_tokens] = scores_h[1, total_tokens]
+        size_t scores_size = batch_size * this->num_heads * total_tokens;
+        float* d_scores = inference_arena->allocate<float>(scores_size);
+
+        kernels::launch_batched_gemm_naive(
+            d_q, d_K_gathered_T, d_scores,
+            batch_size,                    // M (total rows of Q)
+            batch_size * total_tokens,     // N (total rows of K, i.e. cols of K^T)
+            this->total_qk_dim,            // K (total columns)
+            1,                             // stride_A (rows per batch in Q = seq_len = 1)
+            total_tokens,                  // stride_B (rows per batch in K = total_tokens)
+            this->head_dim_qk,             // stride_K (columns per head)
+            stream);
+
+        // --- 6. Scale ---
+        float scale_factor = 1.0f / sqrtf(static_cast<float>(this->head_dim_qk));
+        kernels::launch_scale(d_scores, scale_factor, scores_size, stream);
+
+        // (No causal mask needed — single query token can attend to all past tokens)
+        // causal mask is removed because we only care about the last token, we possibly dont
+        // even need to calculate the attention processed block for other we dont even need to compute them
+        // because for subsequent layers we would get them from kv cache
+        //yes what I mean was that we would have needed them to get the K and V matrix for the previous token, but since we cache them we dont need compute the modified vector for the previous token at all, 
+        // --- 7. Softmax over total_tokens per head ---
+        kernels::launch_softmax(d_scores, this->num_heads * batch_size, total_tokens, stream);
+
+        // --- 8. Attn × V: scores[1, total_tokens] × V[total_tokens, hd] = ctx[1, hd] per head ---
+        float* d_context = inference_arena->allocate<float>(proj_size);
+
+        kernels::launch_batched_one_to_one_gemm_naive(
+            d_scores, d_V_gathered, d_context,
+            batch_size,                               // M (total rows of scores)
+            this->total_qk_dim,                       // N (total columns of V = total_qk_dim)
+            this->num_heads * total_tokens,           // K (num batched sub-problems along K axis)
+            1,                                        // stride_A (cols per head in scores, seq_len=1)
+            this->head_dim_qk,                        // stride_B (cols per head in V)
+            total_tokens,                             // stride_K (rows per batch in scores = total_tokens)
+            stream);
+
+        // --- 9. Output projection ---
+        kernels::launch_gemm_tiled(d_context, d_W_o, d_output, batch_size, this->d_model, this->total_qk_dim, stream);
+        kernels::launch_bias_add(d_output, this->d_b_o, batch_size, this->d_model, stream);
+
+        return;  // decode done
+    }
+
+    // ===================================================================
+    // PREFILL PATH (also used when kv_cache == nullptr for backward compat)
+    // Full sequence attention with [seq, seq] score matrix
+    // ===================================================================
     
     size_t qk_proj_size = batch_size*seq_len*this->total_qk_dim;
     
@@ -80,6 +182,11 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
     kernels::launch_bias_add(d_K, this->d_b_k, batch_size*seq_len, this->total_qk_dim, stream);
     log_tensor_sample("K projection", d_K, qk_proj_size, stream);
 
+    // Write K/V to cache during prefill if cache is available
+    if (kv_cache != nullptr) {
+        kv_cache->append_k(layer_index_, d_K, seq_len, stream);
+    }
+
     float* d_K_transpose = inference_arena->allocate<float>(qk_proj_size);
     kernels::launch_transpose(d_K, d_K_transpose, batch_size*seq_len, this->total_qk_dim, stream);
     log_tensor_sample("K transpose", d_K_transpose, qk_proj_size, stream);
@@ -88,6 +195,10 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
     kernels::launch_gemm_tiled(d_input, this->d_W_v, d_V, batch_size*seq_len, this->total_qk_dim, this->d_model, stream);
     kernels::launch_bias_add(d_V, this->d_b_v, batch_size*seq_len, this->total_qk_dim, stream);
     log_tensor_sample("V projection", d_V, qk_proj_size, stream);
+
+    if (kv_cache != nullptr) {
+        kv_cache->append_v(layer_index_, d_V, seq_len, stream);
+    }
 
     float* d_attention = inference_arena->allocate<float>(attention_size);
 

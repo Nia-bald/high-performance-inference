@@ -17,7 +17,7 @@ void LayerNorm::load_weights(const float* h_gamma, const float* h_beta) {
     cudaMemcpy(d_beta,  h_beta,  d_model * sizeof(float), cudaMemcpyHostToDevice);
 }
 
-void LayerNorm::forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream) {
+void LayerNorm::forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream, IKVCache* /*kv_cache*/) {
     
     // Launch without passing epsilon
     kernels::launch_layer_norm(

@@ -207,7 +207,7 @@ int main() {
     GPUMemoryArena inference_arena(arena_size);
 
     // Construct SelfAttention layer
-    SelfAttention attention(D_MODEL, NUM_HEADS, weights_arena,
+    SelfAttention attention(D_MODEL, NUM_HEADS, /*layer_index=*/0, weights_arena,
                             D_MODEL / NUM_HEADS, D_MODEL / NUM_HEADS);
 
     // Load the randomly-generated weight matrices

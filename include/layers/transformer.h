@@ -14,7 +14,7 @@ public:
     ~LayerNorm() = default;
 
     // input: [Batch, Seq, d_model]
-    void forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream) override;
+    void forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream, IKVCache* kv_cache = nullptr) override;
 
     // Static Estimators
     static size_t estimate_weight_memory(int d_model);
@@ -39,7 +39,7 @@ public:
     FeedForward(int d_model, int d_ff, GPUMemoryArena& weights_arena);
     ~FeedForward() = default;
 
-    void forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream) override;
+    void forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream, IKVCache* kv_cache = nullptr) override;
 
     // Static Estimators
     static size_t estimate_weight_memory(int d_model, int d_ff);
@@ -68,9 +68,9 @@ private:
 class TransformerBlock : public Layer {
 public:
     TransformerBlock(int d_model, int num_heads, int d_ff, 
-                     GPUMemoryArena& weights_arena);
+                     int layer_index, GPUMemoryArena& weights_arena);
     ~TransformerBlock() = default;
-    void forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream) override;
+    void forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream, IKVCache* kv_cache = nullptr) override;
 
     // Static Estimators
     static size_t estimate_weight_memory(int d_model, int num_heads, int d_ff);
@@ -104,7 +104,7 @@ public:
     // Main Inference Function
     // Input: d_token_ids [Batch, Seq] (Integers)
     // Output: d_logits [Batch, Seq, Vocab] (Floats)
-    void forward(const int* d_token_ids, float* d_logits, int current_batch_size, int current_seq_len, GPUMemoryArena& inference_arena, cudaStream_t stream);
+    void forward(const int* d_token_ids, float* d_logits, int current_batch_size, int current_seq_len, GPUMemoryArena& inference_arena, cudaStream_t stream, IKVCache* kv_cache = nullptr);
 
     // Static Estimators
     static size_t estimate_weight_memory(int vocab_size, int max_seq_len, int d_model, int num_heads, int num_layers, int d_ff);
@@ -122,6 +122,8 @@ public:
     int get_vocab_size() const { return vocab_size; }
     int get_max_seq_len() const { return max_seq_len; }
     int get_d_model() const { return d_model; }
+    int get_num_layers() const { return num_layers; }
+    int get_num_heads() const { return num_heads; }
 
 
 private:
@@ -129,6 +131,7 @@ private:
     int max_seq_len;
     int vocab_size;
     int num_layers;
+    int num_heads;
     int batch_size; // Needed for internal sizing
 
     // Embeddings

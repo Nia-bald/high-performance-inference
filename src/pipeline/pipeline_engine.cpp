@@ -1,4 +1,5 @@
 #include "pipeline/pipeline_engine.hpp"
+#include "kv_cache/contiguous_kv_cache.h"
 #include <iostream>
 #include <algorithm>
 
@@ -16,6 +17,12 @@ PipelineEngine::PipelineEngine(Transformer& model, GPT2Tokenizer& tokenizer, GPU
     d_input_ids = inference_arena.allocate<int>(max_batch_size * max_seq_len);
     d_logits = inference_arena.allocate<float>(max_batch_size * max_seq_len * vocab_size);
     d_next_tokens = inference_arena.allocate<int>(max_batch_size);
+
+    // Allocate KV cache (persistent — lives for the entire generation session)
+    kv_cache_ = KVCacheFactory::create_contiguous(
+        model.get_num_layers(), model.get_num_heads(), max_seq_len,
+        model.get_d_model() / model.get_num_heads(),  // head_dim
+        max_batch_size, inference_arena);
 
     persistent_offset = inference_arena.get_used();
 }
@@ -46,13 +53,16 @@ void PipelineEngine::run_prefill(GenerationResult& result, const GenerationConfi
 
     inference_arena.reset_to(persistent_offset);
 
+    // Reset cache for new generation
+    kv_cache_->reset();
+
     // Pad and pack all sequences into a flat tensor
     std::vector<int> packed;
     int padded_seq_len = pad_and_pack(result.output_sequences, packed);
 
     cudaMemcpyAsync(d_input_ids, packed.data(), batch_size * padded_seq_len * sizeof(int), cudaMemcpyHostToDevice, stream);
 
-    model.forward(d_input_ids, d_logits, batch_size, padded_seq_len, inference_arena, stream);
+    model.forward(d_input_ids, d_logits, batch_size, padded_seq_len, inference_arena, stream, kv_cache_.get());
 
     // Argmax on last token's logits for each sequence in the batch
     // For each sequence b, the last valid logits are at position (seq_len_b - 1)
@@ -71,6 +81,9 @@ void PipelineEngine::run_prefill(GenerationResult& result, const GenerationConfi
         result.output_sequences[b].push_back(next_tokens[b]);
     }
     result.metrics.generated_tokens += batch_size;
+
+    // Mark cache position after prefill
+    kv_cache_->set_pos(padded_seq_len);
 }
 
 void PipelineEngine::run_decode(GenerationResult& result, const GenerationConfig& config) {
@@ -83,24 +96,25 @@ void PipelineEngine::run_decode(GenerationResult& result, const GenerationConfig
         // Re-use scratch memory for each step
         inference_arena.reset_to(persistent_offset);
 
-        // Pad and pack current state of all sequences
-        std::vector<int> packed;
-        int padded_seq_len = pad_and_pack(result.output_sequences, packed);
-
-        // Cap generation if any sequence would exceed max
-        if (padded_seq_len >= max_seq_len) {
+        // Cap generation if cache would exceed max
+        if (kv_cache_->current_pos() >= max_seq_len) {
             std::cerr << "Warning: Generation length reached maximum sequence length!" << std::endl;
             break;
         }
 
-        cudaMemcpyAsync(d_input_ids, packed.data(), batch_size * padded_seq_len * sizeof(int), cudaMemcpyHostToDevice, stream);
+        // Pack only the LAST token from each sequence (seq_len = 1)
+        std::vector<int> last_tokens(batch_size);
+        for (int b = 0; b < batch_size; ++b) {
+            last_tokens[b] = result.output_sequences[b].back();
+        }
 
-        model.forward(d_input_ids, d_logits, batch_size, padded_seq_len, inference_arena, stream);
+        cudaMemcpyAsync(d_input_ids, last_tokens.data(), batch_size * sizeof(int), cudaMemcpyHostToDevice, stream);
 
-        // Argmax on last position for each sequence
-        float* last_logits = d_logits + (padded_seq_len - 1) * vocab_size;
-        int row_stride = padded_seq_len * vocab_size;
-        kernels::launch_argmax(last_logits, d_next_tokens, batch_size, 1, vocab_size, row_stride, stream);
+        // Forward with seq_len=1 — attention uses cached K/V
+        model.forward(d_input_ids, d_logits, batch_size, /*seq_len=*/1, inference_arena, stream, kv_cache_.get());
+
+        // Argmax on the single token's logits (no stride needed, seq_len=1)
+        kernels::launch_argmax(d_logits, d_next_tokens, batch_size, 1, vocab_size, /*row_stride=*/0, stream);
 
         std::vector<int> next_tokens(batch_size);
         cudaMemcpyAsync(next_tokens.data(), d_next_tokens, batch_size * sizeof(int), cudaMemcpyDeviceToHost, stream);
@@ -110,6 +124,9 @@ void PipelineEngine::run_decode(GenerationResult& result, const GenerationConfig
             result.output_sequences[b].push_back(next_tokens[b]);
         }
         result.metrics.generated_tokens += batch_size;
+
+        // Advance cache position after each decode step
+        kv_cache_->advance();
     }
 }
 

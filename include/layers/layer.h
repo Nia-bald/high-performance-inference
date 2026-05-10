@@ -4,6 +4,8 @@
 #include <iostream>
 #include "memory.h"
 
+class IKVCache;  // Forward declaration — no header dependency
+
 extern bool ENABLE_LAYER_PROFILING;
 void log_layer_profile_csv(const std::string& layer_name, int batch_size, int seq_len, float ms);
 
@@ -21,12 +23,12 @@ public:
 
     const std::string& get_name() const { return layer_name; }
 
-    void forward(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream) {
+    void forward(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream, IKVCache* kv_cache = nullptr) {
         if (ENABLE_LAYER_PROFILING) {
             cudaEventRecord(start_event, stream);
         }
 
-        forward_impl(d_input, d_output, batch_size, seq_len, inference_arena, stream);
+        forward_impl(d_input, d_output, batch_size, seq_len, inference_arena, stream, kv_cache);
 
         if (ENABLE_LAYER_PROFILING) {
             cudaEventRecord(stop_event, stream);
@@ -42,5 +44,5 @@ protected:
     cudaEvent_t start_event;
     cudaEvent_t stop_event;
 
-    virtual void forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream) = 0;
+    virtual void forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream, IKVCache* kv_cache = nullptr) = 0;
 };

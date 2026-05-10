@@ -28,6 +28,8 @@ set(KERNEL_SOURCES
     src/kernels/addition.cu
     src/kernels/activation.cu
     src/kernels/sampling.cu
+    src/kernels/cache_append.cu
+    src/kernels/cache_gather.cu
 )
 
 # 2. C++ Layers & Core Logic (The Transformer Implementation)
@@ -42,6 +44,7 @@ set(LAYER_SOURCES
     src/utils/loader.cpp # Assuming you put the loader helper here
     src/tokenizer.cpp
     src/pipeline/pipeline_engine.cpp
+    src/kv_cache/contiguous_kv_cache.cu
     src/batch_executor.cpp
     src/batch_executor_orchestrator.cpp
 )

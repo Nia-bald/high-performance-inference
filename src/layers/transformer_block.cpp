@@ -2,18 +2,18 @@
 #include <cstdio>
 
 TransformerBlock::TransformerBlock(int d_model, int num_heads, int d_ff, 
-                                   GPUMemoryArena& weights_arena)
+                                   int layer_index, GPUMemoryArena& weights_arena)
     : Layer("TransformerBlock"),
       d_model(d_model),
-      attention_norm(d_model, weights_arena), // No epsilon needed now
-      attention(d_model, num_heads, weights_arena),
+      attention_norm(d_model, weights_arena),
+      attention(d_model, num_heads, layer_index, weights_arena),
       ffn_norm(d_model, weights_arena),
       feed_forward(d_model, d_ff, weights_arena)
 {
-    printf("[TransformerBlock] Initialized Block (D:%d)\n", d_model);
+    printf("[TransformerBlock] Initialized Block %d (D:%d)\n", layer_index, d_model);
 }
 
-void TransformerBlock::forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream) 
+void TransformerBlock::forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream, IKVCache* kv_cache) 
 {
     size_t tensor_size = batch_size * seq_len * d_model;
 
@@ -23,9 +23,9 @@ void TransformerBlock::forward_impl(const float* d_input, float* d_output, int b
     float* d_norm1_out = inference_arena->allocate<float>(tensor_size);
     attention_norm.forward(d_input, d_norm1_out, batch_size, seq_len, nullptr, stream);
 
-    // B. Attention
+    // B. Attention — pass kv_cache (only layer that uses it)
     float* d_attn_out = inference_arena->allocate<float>(tensor_size);
-    attention.forward(d_norm1_out, d_attn_out, batch_size, seq_len, inference_arena, stream);
+    attention.forward(d_norm1_out, d_attn_out, batch_size, seq_len, inference_arena, stream, kv_cache);
 
     // C. Residual 1 (Input + Attn_Out)
     // Using YOUR kernel

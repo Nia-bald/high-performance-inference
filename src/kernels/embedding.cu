@@ -11,7 +11,8 @@ namespace kernels {
         const float* __restrict__ pos_table,    // [MaxSeq, d_model]
         float* __restrict__ output,             // [Batch, Seq, d_model]
         int d_model,
-        int current_seq_len)                    // The ACTUAL length of this batch
+        int current_seq_len,                    // The ACTUAL length of this batch
+        int start_pos = 0)                      // Starting absolute position for this batch
     {
         int global_token_idx = blockIdx.x; 
         
@@ -20,7 +21,7 @@ namespace kernels {
         // If we used max_seq_len here, Batch 1's start index would result in the wrong position.
         // Example: Batch 0 ends at index 9. Index 10 is start of Batch 1.
         // 10 % 10 = 0. Correct!
-        int seq_position = global_token_idx % current_seq_len; 
+        int seq_position = start_pos + (global_token_idx % current_seq_len); 
 
         int token_id = token_ids[global_token_idx];
 
@@ -47,7 +48,8 @@ namespace kernels {
         int batch_size, 
         int current_seq_len, // Passed from forward()
         int d_model, 
-        cudaStream_t stream)
+        cudaStream_t stream,
+        int start_pos)
     {
         int total_tokens = batch_size * current_seq_len;
         
@@ -61,7 +63,8 @@ namespace kernels {
             pos_table, 
             output, 
             d_model, 
-            current_seq_len 
+            current_seq_len,
+            start_pos
         );
         
         cudaError_t err = cudaGetLastError();

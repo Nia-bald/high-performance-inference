@@ -17,13 +17,15 @@ This engine takes the opposite approach: every CUDA kernel, every memory allocat
 
 | Metric | Current |
 |---|---|
-| **Prefill Throughput** | ~2,077 tok/s |
-| **Decode Throughput** | ~21 tok/s |
+| **Prefill Throughput** | ~2,056 tok/s |
+| **Decode Throughput** | ~50 tok/s |
 | **TTFT (79 tokens)** | ~38 ms |
+| **Decode Latency (128 tokens)** | ~2,537 ms |
 | **Weight Memory** | 622 MB / 632 MB (98.4%) |
+| **KV Cache Memory** | 72 MB (12 layers) |
 | **Scratch Memory** | 1136 MB |
 
-> These numbers are from the built-in benchmark suite running a 79-token prompt (May 2026). Decode throughput is currently without KV cache — every token recomputes the full sequence attention. This is the primary optimization target.
+> These numbers are from the built-in benchmark suite running a 79-token prompt generating 128 tokens (May 2026). Decode uses a contiguous KV cache — only the new token is projected and attended against cached K/V history each step, giving O(N) per-step compute instead of O(N²).
 
 ### GEMM Kernel Performance
 
@@ -102,8 +104,12 @@ Below is the latest performance comparison between this Custom C++ engine, Huggi
 │   │   ├── pipeline_engine.hpp     # Current execution strategy
 │   │   └── metrics.hpp             # GenerationMetrics, GenerationResult, GenerationConfig
 │   ├── layers/
+│   │   ├── layer.h                 # Abstract Layer base (Template Method for profiling)
 │   │   ├── transformer.h           # Transformer, TransformerBlock, LayerNorm, FeedForward
 │   │   └── attention.h             # Multi-head self-attention
+│   ├── kv_cache/
+│   │   ├── kv_cache.h              # IKVCache interface + KVCacheFactory
+│   │   └── contiguous_kv_cache.h   # Contiguous layout strategy
 │   ├── batch_executor.hpp          # Per-batch execution context (stream + memory)
 │   ├── batch_executor_orchestrator.hpp  # Top-level API — model + weight lifecycle
 │   ├── kernels.cuh                 # All CUDA kernel declarations
@@ -121,12 +127,16 @@ Below is the latest performance comparison between this Custom C++ engine, Huggi
 │   │   ├── sampling.cu             #   Argmax (greedy decoding)
 │   │   ├── transpose.cu            #   Matrix transpose
 │   │   ├── addition.cu             #   Element-wise addition (residuals)
+│   │   ├── cache_append.cu         #   KV cache append (scatter-copy per head)
+│   │   ├── cache_gather.cu         #   KV cache gather (reconstruct flat layout)
 │   │   └── ...
 │   ├── layers/                     # C++ layer implementations
 │   │   ├── attention.cpp           #   Multi-head attention orchestration
 │   │   ├── feed_forward.cpp        #   FFN (up-proj → GELU → down-proj)
 │   │   ├── layer_norm.cpp          #   LayerNorm wrapper
 │   │   └── transformer_block.cpp   #   Pre-norm transformer block
+│   ├── kv_cache/
+│   │   └── contiguous_kv_cache.cu  #   Contiguous KV cache implementation
 │   ├── pipeline/
 │   │   └── pipeline_engine.cpp     # PipelineEngine strategy implementation
 │   ├── transformer.cpp             # Full forward pass orchestration
@@ -145,6 +155,7 @@ Below is the latest performance comparison between this Custom C++ engine, Huggi
 ├── tools/
 │   ├── gpt2_exporter.py            # Export HuggingFace GPT-2 weights to binary
 │   ├── hf_baseline.py              # HuggingFace reference for comparison
+│   ├── plot_benchmarks.py          # Generate comparison dashboard chart
 │   └── ...                         # Debug/validation scripts
 ├── docs/
 │   └── performance_testing/        # Timestamped benchmark reports (CSV + summary)
@@ -200,12 +211,13 @@ make -j$(nproc)
 ```
 >>> Initializing Engine...
 >>> Starting Inference: 'Alan Turing was a' ...
+[KVCache] Allocated ContiguousKVCache: 72 MB for 12 layers
  brilliant mathematician, and he was a great friend of mine.
 
 --- Performance Metrics ---
-Prefill Time:  38.03 ms (2077 tok/s)
-Decode Time:   5973.8 ms (21.3 tok/s) for 128 tokens
-Total Time:    6011.9 ms
+Prefill Time:  38.42 ms (2056 tok/s)
+Decode Time:   2536.6 ms (50.1 tok/s) for 128 tokens
+Total Time:    2575.0 ms
 ```
 
 ## Benchmark Suite
@@ -227,10 +239,11 @@ cat docs/performance_testing/run_*/summary_*.txt
 
 ## Roadmap
 
-The primary bottleneck is decode throughput (~21 tok/s). Key optimizations planned:
+Key optimizations planned and completed:
 
 - [x] **Register-Tiled GEMM** — 3× speedup over textbook shared-memory tiling by having each thread compute an 8×8 sub-tile in registers (achieving ~58% of cuBLAS on square matrices).
-- [ ] **KV Cache** — Avoid recomputing attention over the full sequence at each decode step. This is the single biggest win available.
+- [x] **KV Cache** — Contiguous KV cache with O(N) decode. Decode throughput improved from ~21 tok/s to ~50 tok/s (2.4× speedup). Each decode step projects only the new token and attends against cached K/V history.
+- [ ] **Fused Decode Attention Kernel** — Replace the current gather + transpose + batched-GEMM decode path with a single fused kernel that reads directly from cache layout, eliminating intermediate memory traffic.
 - [ ] **Kernel Fusion** — Fuse LayerNorm + QKV projection, bias + GELU, and other adjacent operations to reduce memory bandwidth pressure and kernel launch overhead.
 - [ ] **Memory-Efficient Attention** — Reduce the O(S²) attention memory footprint to enable longer sequences within 4GB VRAM.
 - [ ] **FP16 / INT8 Quantization** — Halve memory usage and leverage Pascal's FP16 throughput (with caveats — GTX 1050 Ti has limited FP16 support).

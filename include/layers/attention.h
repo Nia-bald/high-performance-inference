@@ -8,10 +8,10 @@
 class SelfAttention : public Layer {
 
 public:
-    SelfAttention(int d_model, int num_heads, GPUMemoryArena& weights_arena,
+    SelfAttention(int d_model, int num_heads, int layer_index, GPUMemoryArena& weights_arena,
             int qk_dim = 0, int v_dim = 0);
     ~SelfAttention() = default;
-    void forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream) override;
+    void forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream, IKVCache* kv_cache = nullptr) override;
 
     // Static Estimators
     static size_t estimate_weight_memory(int d_model, int num_heads, int qk_dim = 0, int v_dim = 0);
@@ -23,7 +23,7 @@ public:
                       const float* h_b_q, const float* h_b_k, const float* h_b_v, const float* h_b_o);
 
 private:
-
+    int layer_index_;
     int d_model;
     int num_heads;
     int head_dim_qk;
