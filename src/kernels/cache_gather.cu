@@ -3,15 +3,20 @@
 // -------------------------------------------------------------------
 // Kernel: Gather valid K/V entries from cache into flat contiguous buffer
 // -------------------------------------------------------------------
-// Cache layout:  [batch, num_heads, max_seq_len, head_dim]
-// Output layout: [batch * pos, num_heads * head_dim]  (same as GEMM projection output)
+// Cache layout:  [batch, max_seq_len, num_heads, head_dim]
+// Output layout: [batch * pos, num_heads * head_dim]
+//
+// With the optimized cache layout, each row at position t already contains
+// [num_heads * head_dim] contiguous floats — this is a simple strided copy.
+// NOTE: This kernel is no longer needed during decode (attention reads
+// directly from cache), but is kept for the prefill path and debugging.
 //
 // For each position t in [0, pos-1], each batch b:
-//   output[(b*pos + t) * total_qk + h*hd + d] = cache[b*H*S*D + h*S*D + t*D + d]
+//   output[(b*pos + t) * total_qk + idx] = cache[b*S*H*D + t*H*D + idx]
 //
 // Grid: dim3(pos, batch_size), Threads: num_heads * head_dim
 __global__ void kernel_cache_gather(
-    const float* __restrict__ cache,   // [batch, num_heads, max_seq_len, head_dim]
+    const float* __restrict__ cache,   // [batch, max_seq_len, num_heads, head_dim]
     float* __restrict__ output,        // [batch * pos, num_heads * head_dim]
     int pos,
     int num_heads,
@@ -25,15 +30,12 @@ __global__ void kernel_cache_gather(
     int total_qk_dim = num_heads * head_dim;
     if (idx >= total_qk_dim) return;
 
-    int h = idx / head_dim;
-    int d = idx % head_dim;
+    // Cache: [b, t, idx] — already contiguous per token!
+    // No need to decompose idx into (h, d) and jump across head blocks.
+    int cache_idx = b * max_seq_len * total_qk_dim
+                  + t * total_qk_dim + idx;
 
-    // Cache: [b, h, t, d]
-    int cache_idx = b * num_heads * max_seq_len * head_dim
-                  + h * max_seq_len * head_dim
-                  + t * head_dim + d;
-
-    // Output: [b*pos + t, h*head_dim + d]
+    // Output: [b*pos + t, idx]
     int out_idx = (b * pos + t) * total_qk_dim + idx;
 
     output[out_idx] = cache[cache_idx];

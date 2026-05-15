@@ -29,8 +29,8 @@ public:
     virtual float* v_head(int layer, int batch, int head) = 0;
 
     // Returns the raw base pointer for a layer's K/V cache.
-    // Layout: [batch_size, num_heads, max_seq_len, head_dim]
-    // Used by gather kernels that need the full contiguous slab.
+    // Layout: [batch_size, max_seq_len, num_heads, head_dim]
+    // Used by attention kernels that read directly from the cache.
     virtual float* k_cache_base(int layer) = 0;
     virtual float* v_cache_base(int layer) = 0;
 
@@ -45,6 +45,7 @@ public:
     virtual int get_num_heads() const = 0;
     virtual int get_head_dim() const = 0;
     virtual int get_max_seq_len() const = 0;
+    virtual int get_batch_size() const = 0;
 
     // --- Lifecycle ---
     virtual void reset() = 0;              // Clear cache for a new generation

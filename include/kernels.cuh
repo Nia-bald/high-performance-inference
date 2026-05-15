@@ -126,9 +126,10 @@ namespace kernels {
         cudaStream_t stream = 0
     );
 
-    // KV Cache: Scatter-append new K/V vectors into cache slots
+    // KV Cache: Append new K/V vectors into cache slots (coalesced write)
     // src:   [batch_size, seq_len, num_heads, head_dim]
-    // cache: [batch_size, num_heads, max_seq_len, head_dim]
+    // cache: [batch_size, max_seq_len, num_heads, head_dim]
+    // Inner dimensions match — naturally coalesced writes.
     void launch_cache_append(
         const float* src,
         float* cache,
@@ -142,8 +143,9 @@ namespace kernels {
     );
 
     // KV Cache: Gather valid entries from cache into flat buffer
-    // cache:  [batch_size, num_heads, max_seq_len, head_dim]
+    // cache:  [batch_size, max_seq_len, num_heads, head_dim]
     // output: [batch_size * pos, num_heads * head_dim]
+    // NOTE: No longer needed during decode — attention reads directly from cache.
     void launch_cache_gather(
         const float* cache,
         float* output,
