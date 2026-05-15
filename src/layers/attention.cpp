@@ -95,25 +95,34 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
 
         int total_tokens = pos + 1;  // valid entries after append
 
-        // --- 3. Gather full K, V from cache into flat buffers ---
-        // Output: [batch * total_tokens, total_qk_dim]
+        // --- 3. Direct cache read: fused pitched-transpose for K ---
+        // Reads directly from cache [batch, max_seq_len, total_qk_dim],
+        // writes transposed & packed [total_qk_dim, batch * total_tokens].
+        // Eliminates separate gather_K + transpose_K (saves 1 kernel + 1 buffer).
         size_t gathered_size = batch_size * total_tokens * this->total_qk_dim;
 
-        float* d_K_gathered = inference_arena->allocate<float>(gathered_size);
-        kernels::launch_cache_gather(
-            kv_cache->k_cache_base(layer_index_), d_K_gathered,
-            total_tokens, batch_size, this->num_heads,
-            kv_cache->get_max_seq_len(), this->head_dim_qk, stream);
+        float* d_K_T = inference_arena->allocate<float>(gathered_size);
+        kernels::launch_cache_pitched_transpose(
+            kv_cache->k_cache_base(layer_index_), d_K_T,
+            total_tokens, kv_cache->get_max_seq_len(),
+            this->total_qk_dim, batch_size, stream);
 
-        float* d_V_gathered = inference_arena->allocate<float>(gathered_size);
-        kernels::launch_cache_gather(
-            kv_cache->v_cache_base(layer_index_), d_V_gathered,
-            total_tokens, batch_size, this->num_heads,
-            kv_cache->get_max_seq_len(), this->head_dim_qk, stream);
-
-        // --- 4. Transpose K: [batch*total_tokens, total_qk] → [total_qk, batch*total_tokens] ---
-        float* d_K_gathered_T = inference_arena->allocate<float>(gathered_size);
-        kernels::launch_transpose(d_K_gathered, d_K_gathered_T, batch_size * total_tokens, this->total_qk_dim, stream);
+        // --- 4. Direct cache read for V ---
+        // For batch_size=1: cache V is [max_seq_len, total_qk_dim], first total_tokens
+        // rows are contiguous — use cache pointer directly (zero-copy, no kernel).
+        // For batch_size>1: inter-batch padding exists, use coalesced gather.
+        float* d_V_usable;
+        if (batch_size == 1) {
+            // Direct read: first total_tokens * total_qk_dim floats are exactly
+            // what the GEMM needs — no gaps, no copy.
+            d_V_usable = kv_cache->v_cache_base(layer_index_);
+        } else {
+            d_V_usable = inference_arena->allocate<float>(gathered_size);
+            kernels::launch_cache_gather(
+                kv_cache->v_cache_base(layer_index_), d_V_usable,
+                total_tokens, batch_size, this->num_heads,
+                kv_cache->get_max_seq_len(), this->head_dim_qk, stream);
+        }
 
         // --- 5. Q × K^T: [batch, total_qk] × [total_qk, batch*total_tokens] ---
         // Per head: q_h[1, hd] × K_h^T[hd, total_tokens] = scores_h[1, total_tokens]
@@ -121,7 +130,7 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
         float* d_scores = inference_arena->allocate<float>(scores_size);
 
         kernels::launch_batched_gemm_naive(
-            d_q, d_K_gathered_T, d_scores,
+            d_q, d_K_T, d_scores,
             batch_size,                    // M (total rows of Q)
             batch_size * total_tokens,     // N (total rows of K, i.e. cols of K^T)
             this->total_qk_dim,            // K (total columns)
@@ -146,7 +155,7 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
         float* d_context = inference_arena->allocate<float>(proj_size);
 
         kernels::launch_batched_one_to_one_gemm_naive(
-            d_scores, d_V_gathered, d_context,
+            d_scores, d_V_usable, d_context,
             batch_size,                               // M (total rows of scores)
             this->total_qk_dim,                       // N (total columns of V = total_qk_dim)
             this->num_heads * total_tokens,           // K (num batched sub-problems along K axis)

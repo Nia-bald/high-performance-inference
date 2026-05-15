@@ -156,4 +156,18 @@ namespace kernels {
         int head_dim,
         cudaStream_t stream = 0
     );
+
+    // KV Cache: Fused pitched-transpose — read directly from cache, write transposed
+    // Replaces gather_K + transpose_K in the decode path.
+    // cache:  [batch_size, max_seq_len, total_qk_dim]  (pitched, only first pos rows valid)
+    // output: [total_qk_dim, batch_size * pos]          (transposed & packed, no gaps)
+    void launch_cache_pitched_transpose(
+        const float* cache,
+        float* output,
+        int pos,
+        int max_seq_len,
+        int total_qk_dim,
+        int batch_size,
+        cudaStream_t stream = 0
+    );
 }
