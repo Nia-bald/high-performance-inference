@@ -1,16 +1,19 @@
 #include "kernels.cuh"
 
 // -------------------------------------------------------------------
-// Kernel: Scatter-append [batch, num_heads, head_dim] into cache slots
+// Kernel: Append [batch, seq_len, num_heads, head_dim] into cache slots
 // -------------------------------------------------------------------
-// Each head's new K/V vector (head_dim floats) must be copied to a
-// different offset in the cache, because heads are stored in separate
-// contiguous blocks of [max_seq_len, head_dim].
+// Source and cache now share the same inner layout [num_heads, head_dim],
+// so the write is naturally coalesced — adjacent threads write adjacent
+// memory addresses within a token's row.
+//
+// Cache layout: [batch_size, max_seq_len, num_heads, head_dim]
+// Src layout:   [batch_size, seq_len,     num_heads, head_dim]
 //
 // Grid: dim3(num_heads, batch_size * seq_len), Threads: head_dim
 __global__ void kernel_cache_append(
     const float* __restrict__ src,   // [batch_size, seq_len, num_heads, head_dim]
-    float* __restrict__ cache,       // [batch_size, num_heads, max_seq_len, head_dim]
+    float* __restrict__ cache,       // [batch_size, max_seq_len, num_heads, head_dim]
     int pos,
     int seq_len,
     int batch_size,
@@ -25,15 +28,16 @@ __global__ void kernel_cache_append(
     int d     = threadIdx.x;
 
     if (d < head_dim) {
-        // src layout is [batch, seq_len, num_heads, head_dim] -> this matches total_qk_dim
+        // src layout is [batch, seq_len, num_heads, head_dim]
         int src_idx = batch * seq_len * num_heads * head_dim
                     + seq_t * num_heads * head_dim
                     + head * head_dim + d;
                     
-        // cache layout is [batch, num_heads, max_seq_len, head_dim]
-        int cache_idx = batch * num_heads * max_seq_len * head_dim
-                      + head * max_seq_len * head_dim
-                      + (pos + seq_t) * head_dim + d;
+        // cache layout is [batch, max_seq_len, num_heads, head_dim]
+        // Inner dimensions match src — coalesced write!
+        int cache_idx = batch * max_seq_len * num_heads * head_dim
+                      + (pos + seq_t) * num_heads * head_dim
+                      + head * head_dim + d;
                       
         cache[cache_idx] = src[src_idx];
     }

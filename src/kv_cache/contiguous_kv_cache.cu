@@ -3,15 +3,19 @@
 #include <cstdio>
 #include <cuda_runtime.h>
 
-// current memory layout explained SHOULD BE OPTIMIZED FOR EASY ACCESS
+// Optimized memory layout: [batch_size, max_seq_len, num_heads, head_dim]
+// All heads for a given token are contiguous — matches attention read pattern.
+// This eliminates the need for gather kernels during decode.
+//
 // <----------------------layer1-------------------------->
-// <--------batch 1------------><----------batch2---------> 
-// <--head1-----><--head2------><--head1-----><--head2------>
-// [-max_seq*hd-][--max_seq*hd-][-max_seq*hd-][-max_seq*hd-]
-// zoom in on single head
-// <------------------------head-------------------------->
-// <----tok1-------><-----tok2-------><--------tok3------->
-// [--head_dim-----][--head_dim------][------head_dim-----]
+// <--------batch 1------------><----------batch2--------->
+// <---tok1------><----tok2-----><---tok1------><----tok2-->
+// <-h1-><--h2--><--h1-><--h2--><--h1-><--h2--><-h1-><-h2->
+//
+// zoom in on single token position:
+// <-----------------------token-------------------------->
+// <----head1----><-----head2----><--------head3---------->
+// [--head_dim---][--head_dim----][------head_dim----------]
 
 // -------------------------------------------------------------------
 // Constructor
@@ -49,19 +53,23 @@ void ContiguousKVCache::append_v(int layer, const float* d_v_new, int seq_len, c
 }
 
 // -------------------------------------------------------------------
-// k_head / v_head — return pointer to a specific head's history
+// k_head / v_head — return pointer to a specific head's data at token 0
 // -------------------------------------------------------------------
-// For head h, the data starts at: base + h * max_seq_len * head_dim
-// This gives the caller [max_seq_len, head_dim] contiguous floats.
+// New layout: [batch_size, max_seq_len, num_heads, head_dim]
+// For head h in batch b, the data for token t is at:
+//   base + b * max_seq_len * num_heads * head_dim + t * num_heads * head_dim + h * head_dim
+// NOTE: Data for a single head across tokens is NOT contiguous (stride = num_heads * head_dim)
+// This is the trade-off: reads across all heads for one token are fast (coalesced),
+// but per-head access requires strided reads.
 float* ContiguousKVCache::k_head(int layer, int batch, int head) {
-    // Layout: [batch_size, num_heads, max_seq_len, head_dim]
-    return k_caches_[layer] + batch * num_heads_ * max_seq_len_ * head_dim_
-                            + head * max_seq_len_ * head_dim_;
+    // Returns pointer to head h at token 0; caller must stride by num_heads_ * head_dim_ per token
+    return k_caches_[layer] + batch * max_seq_len_ * num_heads_ * head_dim_
+                            + head * head_dim_;
 }
 
 float* ContiguousKVCache::v_head(int layer, int batch, int head) {
-    return v_caches_[layer] + batch * num_heads_ * max_seq_len_ * head_dim_
-                            + head * max_seq_len_ * head_dim_;
+    return v_caches_[layer] + batch * max_seq_len_ * num_heads_ * head_dim_
+                            + head * head_dim_;
 }
 
 float* ContiguousKVCache::k_cache_base(int layer) { return k_caches_[layer]; }
@@ -80,6 +88,7 @@ int ContiguousKVCache::get_num_layers() const  { return num_layers_; }
 int ContiguousKVCache::get_num_heads() const   { return num_heads_; }
 int ContiguousKVCache::get_head_dim() const    { return head_dim_; }
 int ContiguousKVCache::get_max_seq_len() const { return max_seq_len_; }
+int ContiguousKVCache::get_batch_size() const   { return batch_size_; }
 
 // -------------------------------------------------------------------
 // Lifecycle
