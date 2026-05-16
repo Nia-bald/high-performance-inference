@@ -75,7 +75,7 @@ target_compile_options(inference_lib PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-lineinf
 # This finds the local CUDA installation and explicitly links the 
 # NVTX v3 library so you can label your C++ functions.
 find_package(CUDAToolkit REQUIRED)
-target_link_libraries(inference_lib PUBLIC CUDA::nvtx3)
+target_link_libraries(inference_lib PUBLIC CUDA::nvtx3 CUDA::cublas)
 # --- Main Engine Executable ---
 if(EXISTS "${CMAKE_SOURCE_DIR}/src/main.cpp")
     add_executable(gpt2_engine src/main.cpp)

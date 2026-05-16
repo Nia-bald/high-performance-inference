@@ -1,5 +1,6 @@
 #include "kernels.cuh"
 #include "memory.h"
+#include <cublas_v2.h>
 
 // ============================================================
 // Register-Tiled SGEMM
@@ -118,6 +119,15 @@ __global__ void gemm_register_tiled(
     }
 }
 
+// Lazily-initialized cuBLAS handle
+static cublasHandle_t get_cublas_handle() {
+    static cublasHandle_t handle = nullptr;
+    if (!handle) {
+        cublasCreate(&handle);
+    }
+    return handle;
+}
+
 void launch_gemm_tiled(
     const float* A,  // [M, K]
     const float* B,  // [K, N]
@@ -125,6 +135,24 @@ void launch_gemm_tiled(
     int M, int N, int K,
     cudaStream_t stream
 ) {
+    // cublasHandle_t handle = get_cublas_handle();
+    // cublasSetStream(handle, stream);
+
+    // float alpha = 1.0f;
+    // float beta  = 0.0f;
+
+    // // Row-major trick: C = A*B  ↔  C^T = B^T * A^T
+    // // cuBLAS sees column-major, so row-major A is already A^T in its view.
+    // // Pass: B as first matrix (N rows, K cols), A as second (K rows, M cols)
+    // cublasSgemm(handle,
+    //     CUBLAS_OP_N, CUBLAS_OP_N,
+    //     N, M, K,
+    //     &alpha,
+    //     B, N,    // B^T in col-major = B in row-major, leading dim = N
+    //     A, K,    // A^T in col-major = A in row-major, leading dim = K
+    //     &beta,
+    //     C, N     // C^T in col-major = C in row-major, leading dim = N
+    // );
     constexpr int THREADS = (BM / TM) * (BN / TN);  // 64
     dim3 block(THREADS);
     dim3 grid(
@@ -138,6 +166,7 @@ void launch_gemm_tiled(
     if (err != cudaSuccess) {
         printf("CUDA Error in GEMM: %s\n", cudaGetErrorString(err));
     }
+
 }
 
 } // namespace kernels
