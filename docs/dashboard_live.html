@@ -932,8 +932,13 @@
           const kData = parseCSV(kernText);
 
           if (pData.length > 0 && kData.length > 0) {
+            let labelArray = [];
+            if (r.comment) {
+              labelArray.push(r.comment);
+            }
+            labelArray.push(r.label || r.name);
             historyData.push({
-              label: r.label || r.name,
+              label: labelArray,
               avg_pipeline: Stats.mean(pData.map(d => d.total_ms)),
               avg_decode_tps: Stats.mean(pData.map(d => d.decode_tok_sec)),
               avg_embedding: Stats.mean(kData.map(d => d.embedding_ms)),

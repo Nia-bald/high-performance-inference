@@ -25,7 +25,7 @@ def update_runs_json(runs_json_path, session_id, engine_name):
         iso_timestamp = session_id
 
     run_name = f"run_{session_id}"
-    label = f"Run {label_time} ({engine_name})"
+    label = f"Run {label_time}" if engine_name == "Custom CPP" else f"Run {label_time} ({engine_name})"
 
     suffix_map = {
         "Custom CPP": "",
