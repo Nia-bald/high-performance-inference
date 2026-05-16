@@ -44,6 +44,10 @@ Below is the latest performance comparison between this Custom C++ engine, Huggi
 
 ![Latest Dashboard Comparison](docs/benchmark_comparison.png)
 
+![Latest Dashboard Comparison - 512 Tokens](docs/benchmark_comparison_512.png)
+
+*Date: May 17, 2026. The above chart specifically represents performance for generating 512 output tokens.*
+
 ## Architecture
 
 ```
