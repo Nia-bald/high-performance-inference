@@ -17,10 +17,10 @@ This engine takes the opposite approach: every CUDA kernel, every memory allocat
 
 | Metric | Current |
 |---|---|
-| **Prefill Throughput** | ~2,056 tok/s |
-| **Decode Throughput** | ~50 tok/s |
-| **TTFT (79 tokens)** | ~38 ms |
-| **Decode Latency (128 tokens)** | ~2,537 ms |
+| **Prefill Throughput** | ~2,185 tok/s |
+| **Decode Throughput** | ~151 tok/s |
+| **TTFT (79 tokens)** | ~36 ms |
+| **Decode Latency (128 tokens)** | ~841 ms |
 | **Weight Memory** | 622 MB / 632 MB (98.4%) |
 | **KV Cache Memory** | 72 MB (12 layers) |
 | **Scratch Memory** | 1136 MB |
@@ -215,9 +215,9 @@ make -j$(nproc)
  brilliant mathematician, and he was a great friend of mine.
 
 --- Performance Metrics ---
-Prefill Time:  38.42 ms (2056 tok/s)
-Decode Time:   2536.6 ms (50.1 tok/s) for 128 tokens
-Total Time:    2575.0 ms
+Prefill Time:  36.16 ms (2185 tok/s)
+Decode Time:   840.92 ms (151.0 tok/s) for 128 tokens
+Total Time:    877.08 ms
 ```
 
 ## Benchmark Suite
@@ -243,6 +243,7 @@ Key optimizations planned and completed:
 
 - [x] **Register-Tiled GEMM** — 3× speedup over textbook shared-memory tiling by having each thread compute an 8×8 sub-tile in registers (achieving ~58% of cuBLAS on square matrices).
 - [x] **KV Cache** — Contiguous KV cache with O(N) decode. Decode throughput improved from ~21 tok/s to ~50 tok/s (2.4× speedup). Each decode step projects only the new token and attends against cached K/V history.
+- [x] **GEMV M=1 Dispatch** — Replaced generic tiled GEMM with specialized GEMV kernels for single-token decode steps. Decode throughput improved from ~50 tok/s to ~151 tok/s (3× speedup).
 - [ ] **Fused Decode Attention Kernel** — Replace the current gather + transpose + batched-GEMM decode path with a single fused kernel that reads directly from cache layout, eliminating intermediate memory traffic.
 - [ ] **Kernel Fusion** — Fuse LayerNorm + QKV projection, bias + GELU, and other adjacent operations to reduce memory bandwidth pressure and kernel launch overhead.
 - [ ] **Memory-Efficient Attention** — Reduce the O(S²) attention memory footprint to enable longer sequences within 4GB VRAM.
