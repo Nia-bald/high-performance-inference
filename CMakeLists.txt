@@ -61,7 +61,8 @@ add_library(inference_lib STATIC
 # Setup Include Directories for the library
 target_include_directories(inference_lib PUBLIC
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/include/layers  # <--- ADD THIS LINE
+    ${CMAKE_SOURCE_DIR}/include/layers
+    ${CMAKE_SOURCE_DIR}/cutlass/include
 )
 
 # =====================================================================
@@ -108,6 +109,9 @@ add_inference_test(test_transformer tests/test_transformer.cu)
 # --- Benchmarks ---
 add_executable(bench_performance tests/bench_performance.cu)
 target_link_libraries(bench_performance PRIVATE inference_lib)
+
+add_executable(bench_gemv tests/bench_gemv.cu)
+target_link_libraries(bench_gemv PRIVATE inference_lib)
 
 message(STATUS "Configured for GTX 1050 Ti (Compute Capability 6.1)")
 message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")

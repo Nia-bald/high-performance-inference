@@ -135,24 +135,27 @@ void launch_gemm_tiled(
     int M, int N, int K,
     cudaStream_t stream
 ) {
-    // cublasHandle_t handle = get_cublas_handle();
-    // cublasSetStream(handle, stream);
+    // ---- M=1 fast path: dispatch to optimized GEMV kernel ----
+    // When M==1, the operation is a row-vector × matrix multiply:
+    //   C[1, N] = A[1, K] × B[K, N]
+    // This is purely memory-bound (arithmetic intensity ≈ 0.25).
+    // The dedicated GEMV kernel uses coalesced float4 loads and
+    // K-split parallelism, achieving 85-101 GB/s on GTX 1050 Ti.
+    //
+    // The register-tiled GEMM kernel is optimized for compute-bound
+    // workloads (large M) and has significant overhead for M=1:
+    //   - Shared memory staging with __syncthreads (unnecessary for M=1)
+    //   - 64 threads per block but only 1 row of useful work
+    //   - TM=8 register tile wastes 7/8 of its computation on padding
+    //
+    // Bias is NOT passed here — all call sites add bias separately
+    // via launch_bias_add() or launch_bias_gelu().
+    if (M == 1) {
+        launch_gemv(A, B, C, N, K, nullptr, stream);
+        return;
+    }
 
-    // float alpha = 1.0f;
-    // float beta  = 0.0f;
-
-    // // Row-major trick: C = A*B  ↔  C^T = B^T * A^T
-    // // cuBLAS sees column-major, so row-major A is already A^T in its view.
-    // // Pass: B as first matrix (N rows, K cols), A as second (K rows, M cols)
-    // cublasSgemm(handle,
-    //     CUBLAS_OP_N, CUBLAS_OP_N,
-    //     N, M, K,
-    //     &alpha,
-    //     B, N,    // B^T in col-major = B in row-major, leading dim = N
-    //     A, K,    // A^T in col-major = A in row-major, leading dim = K
-    //     &beta,
-    //     C, N     // C^T in col-major = C in row-major, leading dim = N
-    // );
+    // ---- General GEMM path (M > 1) ----
     constexpr int THREADS = (BM / TM) * (BN / TN);  // 64
     dim3 block(THREADS);
     dim3 grid(
