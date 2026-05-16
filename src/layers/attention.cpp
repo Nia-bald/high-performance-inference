@@ -2,6 +2,8 @@
 #include "kv_cache/kv_cache.h"
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <vector>
 #include <cuda_runtime.h>
 
 // Log first N elements of a device tensor to stdout (set to 0 to disable)
@@ -52,13 +54,10 @@ SelfAttention::SelfAttention(int d_model, int num_heads, int layer_index, GPUMem
     printf("   >> Q/K Head Dim: %d (Total: %d)\n", head_dim_qk, total_qk_dim);
     printf("   >> V Head Dim:   %d (Total: %d)\n", head_dim_v, total_v_dim);
 
-    this->d_W_q = weights_arena.allocate<float>(d_model*this->total_qk_dim);
-    this->d_b_q = weights_arena.allocate<float>(this->total_qk_dim);
-    this->d_W_k = weights_arena.allocate<float>(d_model*this->total_qk_dim);
-    this->d_b_k = weights_arena.allocate<float>(this->total_qk_dim);
-    this->d_W_v = weights_arena.allocate<float>(d_model*this->total_v_dim);
-    this->d_b_v = weights_arena.allocate<float>(this->total_v_dim);
-    this->d_W_o = weights_arena.allocate<float>(this->total_v_dim*d_model);
+    // Fused QKV weight: [d_model, 3*total_qk_dim] — single GEMM for Q, K, V
+    this->d_W_qkv = weights_arena.allocate<float>(d_model * 3 * this->total_qk_dim);
+    this->d_b_qkv = weights_arena.allocate<float>(3 * this->total_qk_dim);
+    this->d_W_o = weights_arena.allocate<float>(this->total_v_dim * d_model);
     this->d_b_o = weights_arena.allocate<float>(d_model);
 
 }
@@ -74,20 +73,45 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
     if (kv_cache != nullptr && seq_len == 1) {
         int pos = kv_cache->current_pos();  // entries already in cache
 
-        // --- 1. Project input → q, k_new, v_new (GEMV: M=1) ---
+        // --- 1. Fused QKV projection: single GEMM for Q, K, V ---
+        //
+        // input [1, d_model] × W_qkv [d_model, 3*D] = d_qkv [1, 3*D]
+        //
+        //  d_qkv memory layout (batch=1, single row):
+        //  <───────── 3*D (2304 for GPT-2) ──────────>
+        //  [q₀ q₁ ... q_D-1 | k₀ k₁ ... k_D-1 | v₀ v₁ ... v_D-1]
+        //  ^                 ^                   ^
+        //  d_q (offset 0)    d_k_new (offset D)  d_v_new (offset 2D)
+        //
+        //  For batch=1: Q, K, V are contiguous in memory → pointer slice (zero copy).
+        //  For batch>1: each row has [Q|K|V] interleaved → need deinterleave kernel.
+        //
         size_t proj_size = batch_size * this->total_qk_dim;
+        int qkv_cols = 3 * this->total_qk_dim;
 
-        float* d_q = inference_arena->allocate<float>(proj_size);
-        kernels::launch_gemm_tiled(d_input, this->d_W_q, d_q, batch_size, this->total_qk_dim, this->d_model, stream);
-        kernels::launch_bias_add(d_q, this->d_b_q, batch_size, this->total_qk_dim, stream);
+        float* d_qkv = inference_arena->allocate<float>(batch_size * qkv_cols);
+        kernels::launch_gemm_tiled(d_input, this->d_W_qkv, d_qkv, batch_size, qkv_cols, this->d_model, stream);
+        kernels::launch_bias_add(d_qkv, this->d_b_qkv, batch_size, qkv_cols, stream);
 
-        float* d_k_new = inference_arena->allocate<float>(proj_size);
-        kernels::launch_gemm_tiled(d_input, this->d_W_k, d_k_new, batch_size, this->total_qk_dim, this->d_model, stream);
-        kernels::launch_bias_add(d_k_new, this->d_b_k, batch_size, this->total_qk_dim, stream);
-
-        float* d_v_new = inference_arena->allocate<float>(proj_size);
-        kernels::launch_gemm_tiled(d_input, this->d_W_v, d_v_new, batch_size, this->total_qk_dim, this->d_model, stream);
-        kernels::launch_bias_add(d_v_new, this->d_b_v, batch_size, this->total_qk_dim, stream);
+        // Slice Q, K, V from fused output
+        float *d_q, *d_k_new, *d_v_new;
+        if (batch_size == 1) {
+            // Zero-cost pointer arithmetic — single row, so Q/K/V are contiguous chunks
+            d_q     = d_qkv;
+            d_k_new = d_qkv + this->total_qk_dim;
+            d_v_new = d_qkv + 2 * this->total_qk_dim;
+        } else {
+            // Multi-row layout (each row has interleaved Q|K|V):
+            //   row 0: [q₀...q_D | k₀...k_D | v₀...v_D]
+            //   row 1: [q₀...q_D | k₀...k_D | v₀...v_D]
+            //   ...
+            // Downstream needs contiguous Q[batch, D], K[batch, D], V[batch, D]
+            // so we deinterleave with a lightweight copy kernel.
+            d_q     = inference_arena->allocate<float>(proj_size);
+            d_k_new = inference_arena->allocate<float>(proj_size);
+            d_v_new = inference_arena->allocate<float>(proj_size);
+            kernels::launch_deinterleave_qkv(d_qkv, d_q, d_k_new, d_v_new, batch_size, this->total_qk_dim, stream);
+        }
 
         // --- 2. Append new k, v to cache ---
         kv_cache->append_k(layer_index_, d_k_new, 1, stream);
@@ -176,19 +200,35 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
     // Full sequence attention with [seq, seq] score matrix
     // ===================================================================
     
-    size_t qk_proj_size = batch_size*seq_len*this->total_qk_dim;
+    int total_rows = batch_size * seq_len;
+    size_t qk_proj_size = total_rows * this->total_qk_dim;
+    int qkv_cols = 3 * this->total_qk_dim;
     
     size_t attention_size = seq_len*seq_len*batch_size*this->num_heads;
 
+    // --- Fused QKV projection: single GEMM ---
+    //
+    //  input [S, d_model] × W_qkv [d_model, 3*D] = d_QKV [S, 3*D]
+    //
+    //  d_QKV memory layout (S rows, each row has interleaved Q|K|V):
+    //    row 0: [q₀ q₁ ... q_D-1 | k₀ k₁ ... k_D-1 | v₀ v₁ ... v_D-1]
+    //    row 1: [q₀ q₁ ... q_D-1 | k₀ k₁ ... k_D-1 | v₀ v₁ ... v_D-1]
+    //    ...    ←──── stride = 3*D ────→
+    //
+    //  Deinterleave copies into contiguous Q[S, D], K[S, D], V[S, D]:
+    //    Q: [row0_q | row1_q | ...]   (stride = D, contiguous)
+    //    K: [row0_k | row1_k | ...]   (stride = D, contiguous)
+    //    V: [row0_v | row1_v | ...]   (stride = D, contiguous)
+    //
+    float* d_QKV = inference_arena->allocate<float>(total_rows * qkv_cols);
+    kernels::launch_gemm_tiled(d_input, this->d_W_qkv, d_QKV, total_rows, qkv_cols, this->d_model, stream);
+    kernels::launch_bias_add(d_QKV, this->d_b_qkv, total_rows, qkv_cols, stream);
 
     float* d_Q = inference_arena->allocate<float>(qk_proj_size);
-    kernels::launch_gemm_tiled(d_input, this->d_W_q, d_Q, batch_size*seq_len, this->total_qk_dim, this->d_model, stream);
-    kernels::launch_bias_add(d_Q, this->d_b_q, batch_size*seq_len, this->total_qk_dim, stream);
-    log_tensor_sample("Q projection", d_Q, qk_proj_size, stream);
-
     float* d_K = inference_arena->allocate<float>(qk_proj_size);
-    kernels::launch_gemm_tiled(d_input, this->d_W_k, d_K, batch_size*seq_len, this->total_qk_dim, this->d_model, stream);
-    kernels::launch_bias_add(d_K, this->d_b_k, batch_size*seq_len, this->total_qk_dim, stream);
+    float* d_V = inference_arena->allocate<float>(qk_proj_size);
+    kernels::launch_deinterleave_qkv(d_QKV, d_Q, d_K, d_V, total_rows, this->total_qk_dim, stream);
+    log_tensor_sample("Q projection", d_Q, qk_proj_size, stream);
     log_tensor_sample("K projection", d_K, qk_proj_size, stream);
 
     // Write K/V to cache during prefill if cache is available
@@ -197,12 +237,8 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
     }
 
     float* d_K_transpose = inference_arena->allocate<float>(qk_proj_size);
-    kernels::launch_transpose(d_K, d_K_transpose, batch_size*seq_len, this->total_qk_dim, stream);
+    kernels::launch_transpose(d_K, d_K_transpose, total_rows, this->total_qk_dim, stream);
     log_tensor_sample("K transpose", d_K_transpose, qk_proj_size, stream);
-
-    float* d_V = inference_arena->allocate<float>(qk_proj_size);
-    kernels::launch_gemm_tiled(d_input, this->d_W_v, d_V, batch_size*seq_len, this->total_qk_dim, this->d_model, stream);
-    kernels::launch_bias_add(d_V, this->d_b_v, batch_size*seq_len, this->total_qk_dim, stream);
     log_tensor_sample("V projection", d_V, qk_proj_size, stream);
 
     if (kv_cache != nullptr) {
@@ -270,12 +306,12 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
         d_A_mult_V,
         d_W_o,
         d_output,
-        batch_size*seq_len,
+        total_rows,
         this->d_model,
         this->total_qk_dim,
         stream
     );
-    kernels::launch_bias_add(d_output, this->d_b_o, batch_size*seq_len, this->d_model, stream);
+    kernels::launch_bias_add(d_output, this->d_b_o, total_rows, this->d_model, stream);
 
     log_tensor_sample("Output (O projection)", d_output, batch_size * seq_len * this->d_model, stream);
 }
@@ -287,22 +323,39 @@ void SelfAttention::load_weights(const float* h_W_q, const float* h_W_k,
     const float* h_b_q, const float* h_b_k, 
     const float* h_b_v, const float* h_b_o) 
 {
-size_t matrix_size = d_model * this->total_qk_dim * sizeof(float);
-size_t bias_size = this->total_qk_dim * sizeof(float);
-size_t matrix_size_o = this->total_qk_dim * d_model * sizeof(float);
-size_t bias_size_o = d_model * sizeof(float);
+    int D = this->total_qk_dim;
 
-cudaMemcpy(d_W_q, h_W_q, matrix_size, cudaMemcpyHostToDevice);
-cudaMemcpy(d_b_q, h_b_q, bias_size, cudaMemcpyHostToDevice);
+    // Interleave W_q, W_k, W_v row-by-row into W_qkv [d_model, 3*D]
+    //
+    //  Separate (from exporter):       Fused (on device):
+    //  W_q [d_model, D]                W_qkv [d_model, 3*D]
+    //  W_k [d_model, D]                row i: [W_q[i] | W_k[i] | W_v[i]]
+    //  W_v [d_model, D]
+    //
+    //  Why row interleave? GEMM reads W row-by-row along the K dimension.
+    //  Columns map to output features. Placing Q/K/V columns adjacent means
+    //  one GEMM produces [Q|K|V] output, which we can slice or deinterleave.
+    //
+    std::vector<float> h_W_qkv(d_model * 3 * D);
+    for (int i = 0; i < d_model; ++i) {
+        std::memcpy(&h_W_qkv[i * 3 * D],         &h_W_q[i * D], D * sizeof(float));
+        std::memcpy(&h_W_qkv[i * 3 * D + D],     &h_W_k[i * D], D * sizeof(float));
+        std::memcpy(&h_W_qkv[i * 3 * D + 2 * D], &h_W_v[i * D], D * sizeof(float));
+    }
+    cudaMemcpy(d_W_qkv, h_W_qkv.data(), d_model * 3 * D * sizeof(float), cudaMemcpyHostToDevice);
 
-cudaMemcpy(d_W_k, h_W_k, matrix_size, cudaMemcpyHostToDevice);
-cudaMemcpy(d_b_k, h_b_k, bias_size, cudaMemcpyHostToDevice);
+    // Concatenate biases: [b_q | b_k | b_v]
+    std::vector<float> h_b_qkv(3 * D);
+    std::memcpy(&h_b_qkv[0],     h_b_q, D * sizeof(float));
+    std::memcpy(&h_b_qkv[D],     h_b_k, D * sizeof(float));
+    std::memcpy(&h_b_qkv[2 * D], h_b_v, D * sizeof(float));
+    cudaMemcpy(d_b_qkv, h_b_qkv.data(), 3 * D * sizeof(float), cudaMemcpyHostToDevice);
 
-cudaMemcpy(d_W_v, h_W_v, matrix_size, cudaMemcpyHostToDevice);
-cudaMemcpy(d_b_v, h_b_v, bias_size, cudaMemcpyHostToDevice);
-
-cudaMemcpy(d_W_o, h_W_o, matrix_size_o, cudaMemcpyHostToDevice);
-cudaMemcpy(d_b_o, h_b_o, bias_size_o, cudaMemcpyHostToDevice);
+    // Output projection stays separate
+    size_t matrix_size_o = this->total_qk_dim * d_model * sizeof(float);
+    size_t bias_size_o = d_model * sizeof(float);
+    cudaMemcpy(d_W_o, h_W_o, matrix_size_o, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_b_o, h_b_o, bias_size_o, cudaMemcpyHostToDevice);
 }
 
 size_t SelfAttention::estimate_weight_memory(int d_model, int num_heads, int qk_dim, int v_dim) {

@@ -170,4 +170,24 @@ namespace kernels {
         int batch_size,
         cudaStream_t stream = 0
     );
+
+    // GEMV: y = x * W (+ bias), optimized for M=1 decode path
+    void launch_gemv(
+        const float* x,     // [K]
+        const float* W,     // [K, N]
+        float* y,           // [N]
+        int N, int K,
+        const float* bias = nullptr,  // [N] or nullptr
+        cudaStream_t stream = 0
+    );
+
+    // Split fused QKV [rows, 3*D] into contiguous Q, K, V [rows, D] each
+    void launch_deinterleave_qkv(
+        const float* qkv,   // [rows, 3*D]
+        float* q,            // [rows, D]
+        float* k,            // [rows, D]
+        float* v,            // [rows, D]
+        int rows, int D,
+        cudaStream_t stream = 0
+    );
 }

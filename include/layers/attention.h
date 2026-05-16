@@ -33,9 +33,8 @@ private:
     int total_v_dim;
 
     // views into weights memory arena, will be same across users
-    float *d_W_q, *d_W_k, *d_W_v, *d_W_o;
-    float *d_b_q, *d_b_k, *d_b_v, *d_b_o;
-    // float *d_Q, *d_K, *d_V; removed these cause these are owned by arena, idea is same attention object we can use to do simultaneous inferences 
-    // float *d_K_transpose, *d_attention;
-    // float *d_attention_heads_output;
+    float *d_W_qkv;  // [d_model, 3*total_qk_dim] — fused Q/K/V projection
+    float *d_b_qkv;  // [3*total_qk_dim]           — fused Q/K/V bias
+    float *d_W_o;    // [total_v_dim, d_model]      — output projection
+    float *d_b_o;    // [d_model]                   — output bias
 };

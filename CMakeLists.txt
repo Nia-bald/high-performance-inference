@@ -30,6 +30,8 @@ set(KERNEL_SOURCES
     src/kernels/sampling.cu
     src/kernels/cache_append.cu
     src/kernels/cache_gather.cu
+    src/kernels/gemv.cu
+    src/kernels/deinterleave.cu
 )
 
 # 2. C++ Layers & Core Logic (The Transformer Implementation)
