@@ -2,7 +2,7 @@
 #include <fstream>
 #include <mutex>
 
-bool ENABLE_LAYER_PROFILING = true;
+bool ENABLE_LAYER_PROFILING = false;
 static std::ofstream csv_file;
 static std::mutex csv_mutex;
 static bool is_file_initialized = false;
