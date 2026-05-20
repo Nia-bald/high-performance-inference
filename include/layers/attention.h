@@ -13,6 +13,11 @@ public:
     ~SelfAttention() = default;
     void forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream, IKVCache* kv_cache = nullptr) override;
 
+    // Decode path with fused residual: output = attn_output_proj + bias + residual
+    void forward_decode_fused(const float* d_input, float* d_output, int batch_size,
+                              const float* d_residual, GPUMemoryArena* inference_arena,
+                              cudaStream_t stream, IKVCache* kv_cache);
+
     // Static Estimators
     static size_t estimate_weight_memory(int d_model, int num_heads, int qk_dim = 0, int v_dim = 0);
     static size_t estimate_inference_scratch(int max_batch_size, int max_seq_len, int d_model, int num_heads, int qk_dim = 0, int v_dim = 0);
@@ -37,4 +42,8 @@ private:
     float *d_b_qkv;  // [3*total_qk_dim]           — fused Q/K/V bias
     float *d_W_o;    // [total_v_dim, d_model]      — output projection
     float *d_b_o;    // [d_model]                   — output bias
+
+    // FP16 weights for decode path (halves bandwidth)
+    half *d_W_qkv_fp16;  // [d_model, 3*total_qk_dim]
+    half *d_W_o_fp16;    // [total_v_dim, d_model]
 };

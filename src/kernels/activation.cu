@@ -50,6 +50,20 @@ namespace kernels {
         bias_gelu_kernel<<<grid_size, block_size, 0, stream>>>(data, bias, total_elements, cols);
     }
 
+    // --- GELU-only (no bias) ---
+    __global__ void gelu_kernel(float* data, int total_elements) {
+        int idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx < total_elements) {
+            data[idx] = gelu(data[idx]);
+        }
+    }
+
+    void launch_gelu(float* data, int length, cudaStream_t stream) {
+        int block_size = 256;
+        int grid_size = (length + block_size - 1) / block_size;
+        gelu_kernel<<<grid_size, block_size, 0, stream>>>(data, length);
+    }
+
     void launch_bias_add(float* data, const float* bias, int rows, int cols, cudaStream_t stream) {
         int total_elements = rows * cols;
         int block_size = 256;

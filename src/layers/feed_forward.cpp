@@ -13,6 +13,10 @@ FeedForward::FeedForward(int d_model, int d_ff, GPUMemoryArena& weights_arena)
     d_W_down = weights_arena.allocate<float>(d_ff * d_model);
     d_b_down = weights_arena.allocate<float>(d_model);
 
+    // 3. FP16 weight copies for decode path (halves memory bandwidth)
+    cudaMalloc(&d_W_up_fp16, d_model * d_ff * sizeof(half));
+    cudaMalloc(&d_W_down_fp16, d_ff * d_model * sizeof(half));
+
     printf("[FeedForward] Initialized (Input: %d -> Hidden: %d -> Output: %d)\n", d_model, d_ff, d_model);
 }
 
@@ -20,12 +24,16 @@ FeedForward::FeedForward(int d_model, int d_ff, GPUMemoryArena& weights_arena)
 void FeedForward::load_weights(const float* h_W_up, const float* h_b_up, 
                                const float* h_W_down, const float* h_b_down) 
 {
-    // Simple Copy to Device
+    // Copy FP32 weights to device
     cudaMemcpy(d_W_up, h_W_up, d_model * d_ff * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_b_up, h_b_up, d_ff * sizeof(float),           cudaMemcpyHostToDevice);
-    
     cudaMemcpy(d_W_down, h_W_down, d_ff * d_model * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_b_down, h_b_down, d_model * sizeof(float),        cudaMemcpyHostToDevice);
+
+    // Convert to FP16 for decode path
+    kernels::launch_convert_fp32_to_fp16(d_W_up, d_W_up_fp16, d_model * d_ff);
+    kernels::launch_convert_fp32_to_fp16(d_W_down, d_W_down_fp16, d_ff * d_model);
+    cudaDeviceSynchronize();
 }
 
 // --- Forward Pass ---
@@ -70,6 +78,22 @@ void FeedForward::forward_impl(const float* d_input, float* d_output, int batch_
 
     // Output = Output + b_down
     kernels::launch_bias_add(d_output, d_b_down, total_rows, d_model, stream);
+}
+
+// --- Decode-Fused Forward: up=GEMV+bias+GELU, down=GEMV+bias+residual ---
+void FeedForward::forward_decode_fused(const float* d_input, float* d_output, int batch_size,
+                                        const float* d_residual, GPUMemoryArena* inference_arena,
+                                        cudaStream_t stream)
+{
+    // Up Projection with FP16 weights: hidden = GELU(input × W_up_fp16 + b_up)
+    // FP16 GEMV halves weight bandwidth (dominant bottleneck)
+    float* d_hidden = inference_arena->allocate<float>(batch_size * d_ff);
+    kernels::launch_gemv_fp16(d_input, d_W_up_fp16, d_hidden, d_ff, d_model, d_b_up, stream);
+    kernels::launch_gelu(d_hidden, d_ff, stream);  // bias already added by FP16 GEMV
+
+    // Down Projection with FP16 weights: output = hidden × W_down_fp16 + b_down + residual
+    kernels::launch_gemv_fp16(d_hidden, d_W_down_fp16, d_output, d_model, d_ff, d_b_down, stream);
+    kernels::launch_addition(d_output, d_residual, d_output, d_model, stream);
 }
 
 size_t FeedForward::estimate_weight_memory(int d_model, int d_ff) {

@@ -41,6 +41,11 @@ public:
 
     void forward_impl(const float* d_input, float* d_output, int batch_size, int seq_len, GPUMemoryArena* inference_arena, cudaStream_t stream, IKVCache* kv_cache = nullptr) override;
 
+    // Decode path with fused kernels: up=GEMV+bias+GELU, down=GEMV+bias+residual
+    void forward_decode_fused(const float* d_input, float* d_output, int batch_size,
+                              const float* d_residual, GPUMemoryArena* inference_arena,
+                              cudaStream_t stream);
+
     // Static Estimators
     static size_t estimate_weight_memory(int d_model, int d_ff);
     static size_t estimate_inference_scratch(int max_batch_size, int max_seq_len, int d_ff);
@@ -52,12 +57,15 @@ private:
     int d_model;
     int d_ff; 
     
-    // Weights
+    // Weights (FP32 for prefill path)
     float* d_W_up;    // [d_model, d_ff]
-    float* d_b_up;    // [d_ff] (Bias for first layer)
-    
+    float* d_b_up;    // [d_ff]
     float* d_W_down;  // [d_ff, d_model]
-    float* d_b_down;  // [d_model] (Bias for second layer)
+    float* d_b_down;  // [d_model]
+
+    // FP16 weights for decode path (halves bandwidth)
+    half* d_W_up_fp16;    // [d_model, d_ff]
+    half* d_W_down_fp16;  // [d_ff, d_model]
 };
 
 // --- 3. Transformer Block ---
@@ -120,6 +128,7 @@ public:
 
     // Getters
     int get_vocab_size() const { return vocab_size; }
+    int get_vocab_size_padded() const { return vocab_size_padded; }
     int get_max_seq_len() const { return max_seq_len; }
     int get_d_model() const { return d_model; }
     int get_num_layers() const { return num_layers; }
@@ -130,6 +139,7 @@ private:
     int d_model;
     int max_seq_len;
     int vocab_size;
+    int vocab_size_padded;  // vocab_size rounded up to multiple of 4 for vec4 GEMV
     int num_layers;
     int num_heads;
     int batch_size; // Needed for internal sizing
@@ -144,4 +154,5 @@ private:
     // Final Layers
     LayerNorm final_norm;
     float* d_lm_head; // [d_model, Vocab]
+    half* d_lm_head_fp16; // [d_model, Vocab] FP16
 };

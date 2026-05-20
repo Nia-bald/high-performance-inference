@@ -1,5 +1,6 @@
 #pragma once
 #include <cuda_runtime.h>
+#include <cuda_fp16.h>
 #include <cstddef>
 
 namespace kernels {
@@ -101,6 +102,9 @@ namespace kernels {
         int cols,
         cudaStream_t stream = 0);
 
+    // GELU activation only (no bias add)
+    void launch_gelu(float* data, int length, cudaStream_t stream = 0);
+
     void launch_bias_add(float* data,
         const float* bias,
         int rows,
@@ -188,6 +192,58 @@ namespace kernels {
         float* k,            // [rows, D]
         float* v,            // [rows, D]
         int rows, int D,
+        cudaStream_t stream = 0
+    );
+
+    // Fused GEMV + Bias + GELU: y = GELU(x * W + bias), optimized for M=1
+    void launch_gemv_bias_gelu(
+        const float* x,     // [K]
+        const float* W,     // [K, N]
+        float* y,           // [N]
+        int N, int K,
+        const float* bias,  // [N]
+        cudaStream_t stream = 0
+    );
+
+    // Fused GEMV + Bias + Residual: y = x * W + bias + residual, optimized for M=1
+    void launch_gemv_bias_residual(
+        const float* x,       // [K]
+        const float* W,       // [K, N]
+        float* y,             // [N]
+        int N, int K,
+        const float* bias,    // [N]
+        const float* residual,// [N]
+        cudaStream_t stream = 0
+    );
+
+    // Fused Decode Attention: Q×K^T + softmax + Attn×V in one kernel
+    void launch_fused_decode_attention(
+        const float* Q,         // [total_qk_dim] (pre-scaled)
+        const float* K_T,       // [total_qk_dim, total_tokens]
+        const float* V,         // [max_seq_len, total_qk_dim] cache base
+        float* output,          // [total_qk_dim]
+        int num_heads,
+        int head_dim,
+        int total_tokens,
+        int total_qk_dim,
+        int v_stride,           // stride between tokens in V cache
+        float scale,
+        cudaStream_t stream = 0
+    );
+
+    // FP16 weight GEMV: y[N] = x[K] * W_half[K,N] + bias[N]
+    void launch_gemv_fp16(
+        const float* x,     // [K] FP32
+        const half* W,      // [K, N] FP16
+        float* y,           // [N] FP32
+        int N, int K,
+        const float* bias = nullptr,
+        cudaStream_t stream = 0
+    );
+
+    // Convert FP32 weights to FP16 on GPU
+    void launch_convert_fp32_to_fp16(
+        const float* src, half* dst, int count,
         cudaStream_t stream = 0
     );
 }

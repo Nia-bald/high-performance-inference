@@ -17,8 +17,17 @@ Transformer::Transformer(int vocab_size, int max_seq_len, int d_model, int num_h
     printf("[Transformer] Allocated position embeddings: %.2f MB used, %.2f%% full\n", 
            weights_arena.get_used() / (1024.0 * 1024.0), weights_arena.get_usage_percent());
     
-    d_lm_head               = weights_arena.allocate<float>(d_model * vocab_size);
-    printf("[Transformer] Allocated LM head: %.2f MB used, %.2f%% full\n", 
+    // Pad vocab_size to next multiple of 4 for float4-vectorized GEMV
+    // 50257 → 50260 enables 4× bandwidth improvement on LM head projection
+    vocab_size_padded = (vocab_size + 3) & ~3;
+    d_lm_head               = weights_arena.allocate<float>(d_model * vocab_size_padded);
+    // Zero the entire padded allocation so padded columns never win argmax
+    cudaMemset(d_lm_head, 0, d_model * vocab_size_padded * sizeof(float));
+    // FP16 copy for decode path
+    cudaMalloc(&d_lm_head_fp16, d_model * vocab_size_padded * sizeof(half));
+    cudaMemset(d_lm_head_fp16, 0, d_model * vocab_size_padded * sizeof(half));
+    printf("[Transformer] Allocated LM head (padded %d→%d): %.2f MB used, %.2f%% full\n", 
+           vocab_size, vocab_size_padded,
            weights_arena.get_used() / (1024.0 * 1024.0), weights_arena.get_usage_percent());
 
     // 2. Create Blocks
@@ -82,11 +91,15 @@ void Transformer::forward(const int* d_token_ids, float* d_logits,
     // We can write the normalized output to 'd_out' (reusing Buffer 2)
     final_norm.forward(d_in, d_out, current_batch_size, current_seq_len, nullptr, stream);
 
-    // 5. Head
-    kernels::launch_gemm_tiled(
-    d_out, d_lm_head, d_logits, 
-    current_batch_size * current_seq_len, vocab_size, d_model, stream
-    );
+    // 5. Head — FP16 GEMV for decode (M=1), tiled GEMM for prefill (M>1)
+    int M = current_batch_size * current_seq_len;
+    if (M == 1) {
+        kernels::launch_gemv_fp16(d_out, d_lm_head_fp16, d_logits, vocab_size_padded, d_model, nullptr, stream);
+    } else {
+        kernels::launch_gemm_tiled(
+            d_out, d_lm_head, d_logits, 
+            M, vocab_size_padded, d_model, stream);
+    }
 }
 // --- Helpers ---
 void Transformer::load_embeddings(const float* h_token, const float* h_pos) {
@@ -94,14 +107,29 @@ void Transformer::load_embeddings(const float* h_token, const float* h_pos) {
     cudaMemcpy(d_pos_embedding_table,   h_pos,   max_seq_len * d_model * sizeof(float), cudaMemcpyHostToDevice);
 }
 void Transformer::load_head(const float* h_head) {
-    cudaMemcpy(d_lm_head, h_head, d_model * vocab_size * sizeof(float), cudaMemcpyHostToDevice);
+    // Load into padded buffer — original data fills [d_model, vocab_size],
+    // padded columns [vocab_size..vocab_size_padded-1] stay zeroed.
+    if (vocab_size_padded > vocab_size) {
+        for (int row = 0; row < d_model; ++row) {
+            cudaMemcpy(d_lm_head + row * vocab_size_padded,
+                       h_head + row * vocab_size,
+                       vocab_size * sizeof(float), cudaMemcpyHostToDevice);
+        }
+    } else {
+        cudaMemcpy(d_lm_head, h_head, d_model * vocab_size * sizeof(float), cudaMemcpyHostToDevice);
+    }
+
+    // Convert to FP16 for decode path
+    kernels::launch_convert_fp32_to_fp16(d_lm_head, d_lm_head_fp16, d_model * vocab_size_padded);
+    cudaDeviceSynchronize();
 }
 
 size_t Transformer::estimate_weight_memory(int vocab_size, int max_seq_len, int d_model, int num_heads, int num_layers, int d_ff) {
+    int vocab_size_padded = (vocab_size + 3) & ~3;
     size_t total = 0;
     total += vocab_size * d_model * sizeof(float);  // d_token_embedding_table
     total += max_seq_len * d_model * sizeof(float); // d_pos_embedding_table
-    total += d_model * vocab_size * sizeof(float);  // d_lm_head
+    total += d_model * vocab_size_padded * sizeof(float);  // d_lm_head (padded)
 
     total += num_layers * TransformerBlock::estimate_weight_memory(d_model, num_heads, d_ff);
     total += LayerNorm::estimate_weight_memory(d_model); // final_norm

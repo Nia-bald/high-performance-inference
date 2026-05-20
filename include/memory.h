@@ -35,5 +35,7 @@ public:
     size_t get_total() const {return total_size;}
     size_t get_remaining() const {return total_size - offset;}
     double get_usage_percent() const {return (double)offset * 100.0 / (double)total_size;}
+    void* get_base_ptr() const { return base_ptr; }
+    size_t get_current_offset() const { return offset; }
 
 };

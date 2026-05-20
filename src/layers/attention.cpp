@@ -60,6 +60,9 @@ SelfAttention::SelfAttention(int d_model, int num_heads, int layer_index, GPUMem
     this->d_W_o = weights_arena.allocate<float>(this->total_v_dim * d_model);
     this->d_b_o = weights_arena.allocate<float>(d_model);
 
+    // FP16 weight copies for decode path
+    cudaMalloc(&d_W_qkv_fp16, d_model * 3 * this->total_qk_dim * sizeof(half));
+    cudaMalloc(&d_W_o_fp16, this->total_v_dim * d_model * sizeof(half));
 }
 
 
@@ -90,8 +93,8 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
         int qkv_cols = 3 * this->total_qk_dim;
 
         float* d_qkv = inference_arena->allocate<float>(batch_size * qkv_cols);
-        kernels::launch_gemm_tiled(d_input, this->d_W_qkv, d_qkv, batch_size, qkv_cols, this->d_model, stream);
-        kernels::launch_bias_add(d_qkv, this->d_b_qkv, batch_size, qkv_cols, stream);
+        // Fused GEMV + bias: single kernel replaces gemm_tiled + bias_add
+        kernels::launch_gemv(d_input, this->d_W_qkv, d_qkv, qkv_cols, this->d_model, this->d_b_qkv, stream);
 
         // Slice Q, K, V from fused output
         float *d_q, *d_k_new, *d_v_new;
@@ -148,7 +151,13 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
                 kv_cache->get_max_seq_len(), this->head_dim_qk, stream);
         }
 
-        // --- 5. Q × K^T: [batch, total_qk] × [total_qk, batch*total_tokens] ---
+        // --- 5. Pre-scale Q: fused scaling avoids separate scale kernel on scores ---
+        // Scale Q[768] once instead of scores[num_heads * total_tokens] later.
+        // The matmul then produces already-scaled attention scores.
+        float scale_factor = 1.0f / sqrtf(static_cast<float>(this->head_dim_qk));
+        kernels::launch_scale(d_q, scale_factor, proj_size, stream);
+
+        // --- 5b. Q × K^T: [batch, total_qk] × [total_qk, batch*total_tokens] ---
         // Per head: q_h[1, hd] × K_h^T[hd, total_tokens] = scores_h[1, total_tokens]
         size_t scores_size = batch_size * this->num_heads * total_tokens;
         float* d_scores = inference_arena->allocate<float>(scores_size);
@@ -162,10 +171,6 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
             total_tokens,                  // stride_B (rows per batch in K = total_tokens)
             this->head_dim_qk,             // stride_K (columns per head)
             stream);
-
-        // --- 6. Scale ---
-        float scale_factor = 1.0f / sqrtf(static_cast<float>(this->head_dim_qk));
-        kernels::launch_scale(d_scores, scale_factor, scores_size, stream);
 
         // (No causal mask needed — single query token can attend to all past tokens)
         // causal mask is removed because we only care about the last token, we possibly dont
@@ -188,9 +193,8 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
             total_tokens,                             // stride_K (rows per batch in scores = total_tokens)
             stream);
 
-        // --- 9. Output projection ---
-        kernels::launch_gemm_tiled(d_context, d_W_o, d_output, batch_size, this->d_model, this->total_qk_dim, stream);
-        kernels::launch_bias_add(d_output, this->d_b_o, batch_size, this->d_model, stream);
+        // --- 9. Output projection: fused GEMV + bias ---
+        kernels::launch_gemv(d_context, d_W_o, d_output, this->d_model, this->total_qk_dim, this->d_b_o, stream);
 
         return;  // decode done
     }
@@ -316,6 +320,67 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
     log_tensor_sample("Output (O projection)", d_output, batch_size * seq_len * this->d_model, stream);
 }
 
+// ===================================================================
+// Decode path with fused residual: output = O_proj(context) + bias + residual
+// Same as decode path in forward_impl but output projection uses
+// launch_gemv_bias_residual to fuse bias_add + residual addition.
+// ===================================================================
+void SelfAttention::forward_decode_fused(const float* d_input, float* d_output, int batch_size,
+                                          const float* d_residual, GPUMemoryArena* inference_arena,
+                                          cudaStream_t stream, IKVCache* kv_cache)
+{
+    int pos = kv_cache->current_pos();
+    size_t proj_size = batch_size * this->total_qk_dim;
+    int qkv_cols = 3 * this->total_qk_dim;
+
+    // 1. Fused QKV projection with FP16 weights
+    float* d_qkv = inference_arena->allocate<float>(batch_size * qkv_cols);
+    kernels::launch_gemv_fp16(d_input, this->d_W_qkv_fp16, d_qkv, qkv_cols, this->d_model, this->d_b_qkv, stream);
+
+    float *d_q, *d_k_new, *d_v_new;
+    if (batch_size == 1) {
+        d_q     = d_qkv;
+        d_k_new = d_qkv + this->total_qk_dim;
+        d_v_new = d_qkv + 2 * this->total_qk_dim;
+    } else {
+        d_q     = inference_arena->allocate<float>(proj_size);
+        d_k_new = inference_arena->allocate<float>(proj_size);
+        d_v_new = inference_arena->allocate<float>(proj_size);
+        kernels::launch_deinterleave_qkv(d_qkv, d_q, d_k_new, d_v_new, batch_size, this->total_qk_dim, stream);
+    }
+
+    // 2. Append K/V to cache — fast path for batch_size=1, seq_len=1
+    //    Cache layout: [max_seq_len, total_qk_dim], so token at pos is at offset pos*total_qk_dim
+    //    This is a contiguous copy, so use cudaMemcpyAsync D2D instead of kernel launch
+    float* k_dst = kv_cache->k_cache_base(layer_index_) + pos * this->total_qk_dim;
+    float* v_dst = kv_cache->v_cache_base(layer_index_) + pos * this->total_qk_dim;
+    cudaMemcpyAsync(k_dst, d_k_new, this->total_qk_dim * sizeof(float), cudaMemcpyDeviceToDevice, stream);
+    cudaMemcpyAsync(v_dst, d_v_new, this->total_qk_dim * sizeof(float), cudaMemcpyDeviceToDevice, stream);
+
+    int total_tokens = pos + 1;
+
+    // 3-8. Fused decode attention: reads K/V directly from cache (no transpose!)
+    // Replaces 5 separate launches: transpose + scale + batched_gemm + softmax + one_to_one_gemm
+    float scale_factor = 1.0f / sqrtf(static_cast<float>(this->head_dim_qk));
+    float* d_context = inference_arena->allocate<float>(proj_size);
+    
+    // K and V cache layout: [max_seq_len, total_qk_dim]
+    // cache_stride = total_qk_dim between consecutive tokens
+    int cache_stride = this->total_qk_dim;
+    kernels::launch_fused_decode_attention(
+        d_q,
+        kv_cache->k_cache_base(layer_index_),  // K directly from cache
+        kv_cache->v_cache_base(layer_index_),   // V directly from cache
+        d_context,
+        this->num_heads, this->head_dim_qk,
+        total_tokens, this->total_qk_dim,
+        cache_stride, scale_factor, stream);
+
+    // 9. Output projection with FP16 weights + bias + residual
+    kernels::launch_gemv_fp16(d_context, d_W_o_fp16, d_output, this->d_model, this->total_qk_dim, d_b_o, stream);
+    kernels::launch_addition(d_output, d_residual, d_output, d_model, stream);
+}
+
 // --- Add this to src/layers/attention.cpp ---
 
 void SelfAttention::load_weights(const float* h_W_q, const float* h_W_k, 
@@ -356,6 +421,11 @@ void SelfAttention::load_weights(const float* h_W_q, const float* h_W_k,
     size_t bias_size_o = d_model * sizeof(float);
     cudaMemcpy(d_W_o, h_W_o, matrix_size_o, cudaMemcpyHostToDevice);
     cudaMemcpy(d_b_o, h_b_o, bias_size_o, cudaMemcpyHostToDevice);
+
+    // Convert to FP16 for decode path
+    kernels::launch_convert_fp32_to_fp16(d_W_qkv, d_W_qkv_fp16, d_model * 3 * D);
+    kernels::launch_convert_fp32_to_fp16(d_W_o, d_W_o_fp16, this->total_qk_dim * d_model);
+    cudaDeviceSynchronize();
 }
 
 size_t SelfAttention::estimate_weight_memory(int d_model, int num_heads, int qk_dim, int v_dim) {

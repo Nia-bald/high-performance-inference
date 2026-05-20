@@ -17,6 +17,38 @@ void TransformerBlock::forward_impl(const float* d_input, float* d_output, int b
 {
     size_t tensor_size = batch_size * seq_len * d_model;
 
+    // ===================================================================
+    // DECODE PATH: seq_len==1 && kv_cache available
+    // Fuses residual additions into GEMV output writes to save 2 kernel
+    // launches per block (24 launches saved per decode step total).
+    // ===================================================================
+    if (kv_cache != nullptr && seq_len == 1) {
+        // --- 1. Attention Path ---
+        float* d_norm1_out = inference_arena->allocate<float>(tensor_size);
+        attention_norm.forward(d_input, d_norm1_out, batch_size, seq_len, nullptr, stream);
+
+        // Attention output — fuse residual addition into output projection
+        // Instead of: attn_out = O_proj(context) + bias; res1 = input + attn_out
+        // We do:      res1 = O_proj(context) + bias + input  (single fused GEMV kernel)
+        float* d_res1 = inference_arena->allocate<float>(tensor_size);
+        attention.forward_decode_fused(d_norm1_out, d_res1, batch_size, d_input, inference_arena, stream, kv_cache);
+
+        // --- 2. FFN Path ---
+        float* d_norm2_out = inference_arena->allocate<float>(tensor_size);
+        ffn_norm.forward(d_res1, d_norm2_out, batch_size, seq_len, nullptr, stream);
+
+        // FFN output — fuse residual addition into down projection
+        // Instead of: ffn_out = down_proj(hidden) + bias; output = res1 + ffn_out
+        // We do:      output = down_proj(hidden) + bias + res1  (single fused GEMV kernel)
+        feed_forward.forward_decode_fused(d_norm2_out, d_output, batch_size, d_res1, inference_arena, stream);
+
+        return;
+    }
+
+    // ===================================================================
+    // PREFILL PATH (unchanged)
+    // ===================================================================
+
     // --- 1. Attention Path ---
 
     // A. Layer Norm 1

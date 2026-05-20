@@ -11,11 +11,13 @@ PipelineEngine::PipelineEngine(Transformer& model, GPT2Tokenizer& tokenizer, GPU
       stream(stream), max_batch_size(max_batch_size) {
     
     int vocab_size = model.get_vocab_size();
+    int vocab_size_padded = model.get_vocab_size_padded();
     int max_seq_len = model.get_max_seq_len();
 
     // Allocate persistent buffers sized for max_batch_size
+    // Use padded vocab size for logits to accommodate vec4 GEMV output
     d_input_ids = inference_arena.allocate<int>(max_batch_size * max_seq_len);
-    d_logits = inference_arena.allocate<float>(max_batch_size * max_seq_len * vocab_size);
+    d_logits = inference_arena.allocate<float>(max_batch_size * max_seq_len * vocab_size_padded);
     d_next_tokens = inference_arena.allocate<int>(max_batch_size);
 
     // Allocate KV cache (persistent — lives for the entire generation session)
@@ -67,8 +69,10 @@ void PipelineEngine::run_prefill(GenerationResult& result, const GenerationConfi
     // Argmax on last token's logits for each sequence in the batch
     // For each sequence b, the last valid logits are at position (seq_len_b - 1)
     // With padding, all sequences are padded_seq_len, so we use that for uniform argmax
-    float* last_logits = d_logits + (padded_seq_len - 1) * vocab_size;
-    int row_stride = padded_seq_len * vocab_size;
+    // NOTE: logits rows are vocab_size_padded wide due to LM head padding
+    int vocab_size_padded = model.get_vocab_size_padded();
+    float* last_logits = d_logits + (padded_seq_len - 1) * vocab_size_padded;
+    int row_stride = padded_seq_len * vocab_size_padded;
     kernels::launch_argmax(last_logits, d_next_tokens, batch_size, 1, vocab_size, row_stride, stream);
 
     // Copy all next tokens back
@@ -92,42 +96,48 @@ void PipelineEngine::run_decode(GenerationResult& result, const GenerationConfig
     int max_new_tokens = config.max_new_tokens;
     int batch_size = config.batch_size;
 
+    // Allocate pinned memory for host-side token buffers
+    int* h_last_tokens;
+    int* h_next_tokens;
+    cudaMallocHost(&h_last_tokens, batch_size * sizeof(int));
+    cudaMallocHost(&h_next_tokens, batch_size * sizeof(int));
+
+    cudaEvent_t step_done;
+    cudaEventCreateWithFlags(&step_done, cudaEventDisableTiming);
+
     for (int step = 1; step < max_new_tokens; ++step) {
-        // Re-use scratch memory for each step
         inference_arena.reset_to(persistent_offset);
 
-        // Cap generation if cache would exceed max
         if (kv_cache_->current_pos() >= max_seq_len) {
             std::cerr << "Warning: Generation length reached maximum sequence length!" << std::endl;
             break;
         }
 
-        // Pack only the LAST token from each sequence (seq_len = 1)
-        std::vector<int> last_tokens(batch_size);
         for (int b = 0; b < batch_size; ++b) {
-            last_tokens[b] = result.output_sequences[b].back();
+            h_last_tokens[b] = result.output_sequences[b].back();
         }
 
-        cudaMemcpyAsync(d_input_ids, last_tokens.data(), batch_size * sizeof(int), cudaMemcpyHostToDevice, stream);
+        cudaMemcpyAsync(d_input_ids, h_last_tokens, batch_size * sizeof(int), cudaMemcpyHostToDevice, stream);
 
-        // Forward with seq_len=1 — attention uses cached K/V
         model.forward(d_input_ids, d_logits, batch_size, /*seq_len=*/1, inference_arena, stream, kv_cache_.get());
 
-        // Argmax on the single token's logits (no stride needed, seq_len=1)
         kernels::launch_argmax(d_logits, d_next_tokens, batch_size, 1, vocab_size, /*row_stride=*/0, stream);
 
-        std::vector<int> next_tokens(batch_size);
-        cudaMemcpyAsync(next_tokens.data(), d_next_tokens, batch_size * sizeof(int), cudaMemcpyDeviceToHost, stream);
-        cudaStreamSynchronize(stream);
+        cudaMemcpyAsync(h_next_tokens, d_next_tokens, batch_size * sizeof(int), cudaMemcpyDeviceToHost, stream);
+        cudaEventRecord(step_done, stream);
+        cudaEventSynchronize(step_done);
 
         for (int b = 0; b < batch_size; ++b) {
-            result.output_sequences[b].push_back(next_tokens[b]);
+            result.output_sequences[b].push_back(h_next_tokens[b]);
         }
         result.metrics.generated_tokens += batch_size;
 
-        // Advance cache position after each decode step
         kv_cache_->advance();
     }
+
+    cudaEventDestroy(step_done);
+    cudaFreeHost(h_last_tokens);
+    cudaFreeHost(h_next_tokens);
 }
 
 void PipelineEngine::finalize(GenerationResult& result) {
