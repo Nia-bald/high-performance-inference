@@ -17,15 +17,15 @@ This engine takes the opposite approach: every CUDA kernel, every memory allocat
 
 | Metric | Current |
 |---|---|
-| **Prefill Throughput** | ~2,185 tok/s |
-| **Decode Throughput** | ~151 tok/s |
-| **TTFT (79 tokens)** | ~36 ms |
-| **Decode Latency (128 tokens)** | ~841 ms |
-| **Weight Memory** | 622 MB / 632 MB (98.4%) |
+| **Prefill Throughput** | ~2,068 tok/s |
+| **Decode Throughput** | ~205 tok/s |
+| **TTFT (79 tokens)** | ~38 ms |
+| **Decode Latency (128 tokens)** | ~620 ms |
+| **Weight Memory** | ~311 MB (FP16) |
 | **KV Cache Memory** | 72 MB (12 layers) |
 | **Scratch Memory** | 1136 MB |
  
-> These numbers are from the built-in benchmark suite running a 79-token prompt generating 128 tokens (May 2026). Decode uses a contiguous KV cache — only the new token is projected and attended against cached K/V history each step, giving O(N) per-step compute instead of O(N²).
+> These numbers are from the built-in benchmark suite running a 79-token prompt generating 128 tokens (May 21, 2026). Weights are stored in FP16 and computed in FP32 (mixed-precision), halving weight memory bandwidth. Decode uses a contiguous KV cache — only the new token is projected and attended against cached K/V history each step, giving O(N) per-step compute instead of O(N²).
 
 ### GEMM Kernel Performance
 
@@ -42,11 +42,13 @@ The GEMM kernel uses **register tiling** (64×64 block tile, 8×8 thread tile pe
 
 Below is the latest performance comparison between this Custom C++ engine, HuggingFace, llama.cpp, and CTranslate2 running the same 79-token prompt on the GTX 1050 Ti:
 
-![Latest Dashboard Comparison](docs/benchmark_comparison.png)
+![Latest Dashboard Comparison — 128 Output Tokens](docs/benchmark_comparison.png)
 
-![Latest Dashboard Comparison - 512 Tokens](docs/benchmark_comparison_512.png)
+*128 output tokens — Custom C++ engine leads decode throughput at 205 tok/s, 1.25× faster than CTranslate2 and 2.1× faster than HuggingFace.*
 
-*Date: May 17, 2026. The above chart specifically represents performance for generating 512 output tokens.*
+![Latest Dashboard Comparison — 512 Output Tokens](docs/benchmark_comparison_512.png)
+
+*512 output tokens — Custom C++ engine sustains 182 tok/s decode, 1.18× faster than CTranslate2 and 1.83× faster than HuggingFace. Date: May 21, 2026 (FP16 weight quantization).*
 
 ## Architecture
 
@@ -97,7 +99,8 @@ Below is the latest performance comparison between this Custom C++ engine, Huggi
 - **Arena-based GPU memory management** — Pre-allocates bulk GPU memory and sub-allocates from it. No `cudaMalloc` in the hot path. Scratch memory is reset per-token via offset tracking.
 - **Strategy pattern for execution** — The `ExecutionStrategy` base class enforces consistent metric definitions (what "prefill time" and "decode time" mean) across all strategies via the Template Method pattern. New strategies implement execution logic; the framework handles timing.
 - **Stream-per-executor isolation** — Each `BatchExecutor` gets its own CUDA stream and memory arena, enabling concurrent execution without resource conflicts.
-- **All custom CUDA kernels** — No cuBLAS, no cuDNN. Every kernel (GEMM, softmax, LayerNorm, attention, GELU, argmax) is hand-written and tuned for this GPU's constraints.
+- **All custom CUDA kernels** — No cuBLAS, no cuDNN. Every kernel (GEMM, GEMV, softmax, LayerNorm, attention, GELU, argmax) is hand-written and tuned for this GPU's constraints.
+- **FP16 weight storage** — All projection weights stored in half-precision, halving VRAM bandwidth during decode. Computation remains in FP32 for numerical stability.
 
 ## Project Structure
 
@@ -248,10 +251,11 @@ Key optimizations planned and completed:
 - [x] **Register-Tiled GEMM** — 3× speedup over textbook shared-memory tiling by having each thread compute an 8×8 sub-tile in registers (achieving ~58% of cuBLAS on square matrices).
 - [x] **KV Cache** — Contiguous KV cache with O(N) decode. Decode throughput improved from ~21 tok/s to ~50 tok/s (2.4× speedup). Each decode step projects only the new token and attends against cached K/V history.
 - [x] **GEMV M=1 Dispatch** — Replaced generic tiled GEMM with specialized GEMV kernels for single-token decode steps. Decode throughput improved from ~50 tok/s to ~151 tok/s (3× speedup).
+- [x] **FP16 Weight Quantization** — Weights stored in FP16, computed in FP32 (mixed-precision). Halves weight memory from ~622 MB to ~311 MB and cuts memory bandwidth during decode. Decode throughput improved from ~151 tok/s to ~205 tok/s (1.36× speedup).
 - [ ] **Fused Decode Attention Kernel** — Replace the current gather + transpose + batched-GEMM decode path with a single fused kernel that reads directly from cache layout, eliminating intermediate memory traffic.
 - [ ] **Kernel Fusion** — Fuse LayerNorm + QKV projection, bias + GELU, and other adjacent operations to reduce memory bandwidth pressure and kernel launch overhead.
 - [ ] **Memory-Efficient Attention** — Reduce the O(S²) attention memory footprint to enable longer sequences within 4GB VRAM.
-- [ ] **FP16 / INT8 Quantization** — Halve memory usage and leverage Pascal's FP16 throughput (with caveats — GTX 1050 Ti has limited FP16 support).
+- [ ] **INT8 Quantization** — Further reduce memory usage with 8-bit integer weights.
 - [ ] **CUDA Graphs** — Capture the decode loop as a graph to eliminate per-step kernel launch overhead.
 
 ## License

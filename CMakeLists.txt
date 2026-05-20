@@ -31,6 +31,8 @@ set(KERNEL_SOURCES
     src/kernels/cache_append.cu
     src/kernels/cache_gather.cu
     src/kernels/gemv.cu
+    src/kernels/gemv_fp16.cu
+    src/kernels/gemm_fp16.cu
     src/kernels/deinterleave.cu
 )
 

@@ -5,6 +5,7 @@
 #include <cstring>
 #include <vector>
 #include <cuda_runtime.h>
+#include <cuda_fp16.h>
 
 // Log first N elements of a device tensor to stdout (set to 0 to disable)
 #define ATTENTION_LOG_SAMPLE 0
@@ -54,10 +55,10 @@ SelfAttention::SelfAttention(int d_model, int num_heads, int layer_index, GPUMem
     printf("   >> Q/K Head Dim: %d (Total: %d)\n", head_dim_qk, total_qk_dim);
     printf("   >> V Head Dim:   %d (Total: %d)\n", head_dim_v, total_v_dim);
 
-    // Fused QKV weight: [d_model, 3*total_qk_dim] — single GEMM for Q, K, V
-    this->d_W_qkv = weights_arena.allocate<float>(d_model * 3 * this->total_qk_dim);
+    // FP16 weight storage: halves VRAM bandwidth for memory-bound projections
+    this->d_W_qkv = weights_arena.allocate<__half>(d_model * 3 * this->total_qk_dim);
     this->d_b_qkv = weights_arena.allocate<float>(3 * this->total_qk_dim);
-    this->d_W_o = weights_arena.allocate<float>(this->total_v_dim * d_model);
+    this->d_W_o = weights_arena.allocate<__half>(this->total_v_dim * d_model);
     this->d_b_o = weights_arena.allocate<float>(d_model);
 
 }
@@ -90,7 +91,7 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
         int qkv_cols = 3 * this->total_qk_dim;
 
         float* d_qkv = inference_arena->allocate<float>(batch_size * qkv_cols);
-        kernels::launch_gemm_tiled(d_input, this->d_W_qkv, d_qkv, batch_size, qkv_cols, this->d_model, stream);
+        kernels::launch_gemm_tiled_fp16w(d_input, this->d_W_qkv, d_qkv, batch_size, qkv_cols, this->d_model, stream);
         kernels::launch_bias_add(d_qkv, this->d_b_qkv, batch_size, qkv_cols, stream);
 
         // Slice Q, K, V from fused output
@@ -189,7 +190,7 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
             stream);
 
         // --- 9. Output projection ---
-        kernels::launch_gemm_tiled(d_context, d_W_o, d_output, batch_size, this->d_model, this->total_qk_dim, stream);
+        kernels::launch_gemm_tiled_fp16w(d_context, d_W_o, d_output, batch_size, this->d_model, this->total_qk_dim, stream);
         kernels::launch_bias_add(d_output, this->d_b_o, batch_size, this->d_model, stream);
 
         return;  // decode done
@@ -221,7 +222,7 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
     //    V: [row0_v | row1_v | ...]   (stride = D, contiguous)
     //
     float* d_QKV = inference_arena->allocate<float>(total_rows * qkv_cols);
-    kernels::launch_gemm_tiled(d_input, this->d_W_qkv, d_QKV, total_rows, qkv_cols, this->d_model, stream);
+    kernels::launch_gemm_tiled_fp16w(d_input, this->d_W_qkv, d_QKV, total_rows, qkv_cols, this->d_model, stream);
     kernels::launch_bias_add(d_QKV, this->d_b_qkv, total_rows, qkv_cols, stream);
 
     float* d_Q = inference_arena->allocate<float>(qk_proj_size);
@@ -302,7 +303,7 @@ void SelfAttention::forward_impl(const float* d_input, float* d_output, int batc
     size_t a_mult_v_size = this->total_qk_dim * seq_len * batch_size;
     log_tensor_sample("A*V (context)", d_A_mult_V, a_mult_v_size, stream);
 
-    kernels::launch_gemm_tiled(
+    kernels::launch_gemm_tiled_fp16w(
         d_A_mult_V,
         d_W_o,
         d_output,
@@ -336,25 +337,32 @@ void SelfAttention::load_weights(const float* h_W_q, const float* h_W_k,
     //  Columns map to output features. Placing Q/K/V columns adjacent means
     //  one GEMM produces [Q|K|V] output, which we can slice or deinterleave.
     //
-    std::vector<float> h_W_qkv(d_model * 3 * D);
+    // Interleave and convert FP32→FP16 for fused QKV weights
+    std::vector<__half> h_W_qkv(d_model * 3 * D);
     for (int i = 0; i < d_model; ++i) {
-        std::memcpy(&h_W_qkv[i * 3 * D],         &h_W_q[i * D], D * sizeof(float));
-        std::memcpy(&h_W_qkv[i * 3 * D + D],     &h_W_k[i * D], D * sizeof(float));
-        std::memcpy(&h_W_qkv[i * 3 * D + 2 * D], &h_W_v[i * D], D * sizeof(float));
+        for (int j = 0; j < D; ++j) {
+            h_W_qkv[i * 3 * D + j]         = __float2half(h_W_q[i * D + j]);
+            h_W_qkv[i * 3 * D + D + j]     = __float2half(h_W_k[i * D + j]);
+            h_W_qkv[i * 3 * D + 2 * D + j] = __float2half(h_W_v[i * D + j]);
+        }
     }
-    cudaMemcpy(d_W_qkv, h_W_qkv.data(), d_model * 3 * D * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_W_qkv, h_W_qkv.data(), d_model * 3 * D * sizeof(__half), cudaMemcpyHostToDevice);
 
-    // Concatenate biases: [b_q | b_k | b_v]
+    // Concatenate biases (remain FP32)
     std::vector<float> h_b_qkv(3 * D);
     std::memcpy(&h_b_qkv[0],     h_b_q, D * sizeof(float));
     std::memcpy(&h_b_qkv[D],     h_b_k, D * sizeof(float));
     std::memcpy(&h_b_qkv[2 * D], h_b_v, D * sizeof(float));
     cudaMemcpy(d_b_qkv, h_b_qkv.data(), 3 * D * sizeof(float), cudaMemcpyHostToDevice);
 
-    // Output projection stays separate
-    size_t matrix_size_o = this->total_qk_dim * d_model * sizeof(float);
+    // Output projection: convert FP32→FP16
+    size_t wo_count = this->total_qk_dim * d_model;
+    std::vector<__half> h_W_o_fp16(wo_count);
+    for (size_t i = 0; i < wo_count; ++i)
+        h_W_o_fp16[i] = __float2half(h_W_o[i]);
+    cudaMemcpy(d_W_o, h_W_o_fp16.data(), wo_count * sizeof(__half), cudaMemcpyHostToDevice);
+
     size_t bias_size_o = d_model * sizeof(float);
-    cudaMemcpy(d_W_o, h_W_o, matrix_size_o, cudaMemcpyHostToDevice);
     cudaMemcpy(d_b_o, h_b_o, bias_size_o, cudaMemcpyHostToDevice);
 }
 
@@ -364,11 +372,12 @@ size_t SelfAttention::estimate_weight_memory(int d_model, int num_heads, int qk_
     int total_qk_dim = head_dim_qk * num_heads;
     int total_v_dim = head_dim_v * num_heads;
 
-    size_t qk_w = d_model * total_qk_dim + total_qk_dim; // W_q, b_q
-    size_t k_w  = d_model * total_qk_dim + total_qk_dim; // W_k, b_k
-    size_t v_w  = d_model * total_v_dim + total_v_dim;   // W_v, b_v
-    size_t o_w  = total_v_dim * d_model + d_model;       // W_o, b_o
-    return (qk_w + k_w + v_w + o_w) * sizeof(float);
+    // FP16 weights: halved storage
+    size_t qk_w = (d_model * total_qk_dim + total_qk_dim) * sizeof(__half) + total_qk_dim * sizeof(float); // W_q (FP16) + b_q (FP32)
+    size_t k_w  = (d_model * total_qk_dim) * sizeof(__half) + total_qk_dim * sizeof(float);
+    size_t v_w  = (d_model * total_v_dim) * sizeof(__half) + total_v_dim * sizeof(float);
+    size_t o_w  = (total_v_dim * d_model) * sizeof(__half) + d_model * sizeof(float);
+    return qk_w + k_w + v_w + o_w;
 }
 
 size_t SelfAttention::estimate_inference_scratch(int max_batch_size, int max_seq_len, int d_model, int num_heads, int qk_dim, int v_dim) {

@@ -52,12 +52,12 @@ private:
     int d_model;
     int d_ff; 
     
-    // Weights
-    float* d_W_up;    // [d_model, d_ff]
-    float* d_b_up;    // [d_ff] (Bias for first layer)
+    // FP16 weight storage (halves VRAM bandwidth)
+    __half* d_W_up;    // [d_model, d_ff] (FP16)
+    float* d_b_up;    // [d_ff] (FP32 bias for GELU fusion)
     
-    float* d_W_down;  // [d_ff, d_model]
-    float* d_b_down;  // [d_model] (Bias for second layer)
+    __half* d_W_down;  // [d_ff, d_model] (FP16)
+    float* d_b_down;  // [d_model] (FP32 bias)
 };
 
 // --- 3. Transformer Block ---
@@ -120,6 +120,7 @@ public:
 
     // Getters
     int get_vocab_size() const { return vocab_size; }
+    int get_padded_vocab_size() const { return padded_vocab_size; }
     int get_max_seq_len() const { return max_seq_len; }
     int get_d_model() const { return d_model; }
     int get_num_layers() const { return num_layers; }
@@ -130,11 +131,12 @@ private:
     int d_model;
     int max_seq_len;
     int vocab_size;
+    int padded_vocab_size;  // vocab_size rounded up to multiple of 8 for FP16 GEMV
     int num_layers;
     int num_heads;
     int batch_size; // Needed for internal sizing
 
-    // Embeddings
+    // Embeddings (FP32 — lookup, not matmul)
     float* d_token_embedding_table; // [Vocab, d_model]
     float* d_pos_embedding_table;   // [MaxSeq, d_model]
 
@@ -143,5 +145,5 @@ private:
     
     // Final Layers
     LayerNorm final_norm;
-    float* d_lm_head; // [d_model, Vocab]
+    __half* d_lm_head; // [d_model, Vocab] (FP16 weights)
 };

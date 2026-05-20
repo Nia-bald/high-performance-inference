@@ -1,6 +1,7 @@
 #pragma once
 #include "kernels.cuh"
 #include <cuda_runtime.h>
+#include <cuda_fp16.h>
 #include "memory.h"
 
 #include "layers/layer.h"
@@ -32,9 +33,10 @@ private:
     int total_qk_dim;
     int total_v_dim;
 
-    // views into weights memory arena, will be same across users
-    float *d_W_qkv;  // [d_model, 3*total_qk_dim] — fused Q/K/V projection
+    // FP16 weight storage (halves VRAM bandwidth for memory-bound GEMV)
+    __half *d_W_qkv;  // [d_model, 3*total_qk_dim] — fused Q/K/V projection (FP16)
+    __half *d_W_o;    // [total_v_dim, d_model]      — output projection (FP16)
+    // Biases remain FP32 (tiny, no bandwidth benefit from FP16)
     float *d_b_qkv;  // [3*total_qk_dim]           — fused Q/K/V bias
-    float *d_W_o;    // [total_v_dim, d_model]      — output projection
     float *d_b_o;    // [d_model]                   — output bias
 };

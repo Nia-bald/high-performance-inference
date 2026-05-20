@@ -11,11 +11,12 @@ PipelineEngine::PipelineEngine(Transformer& model, GPT2Tokenizer& tokenizer, GPU
       stream(stream), max_batch_size(max_batch_size) {
     
     int vocab_size = model.get_vocab_size();
+    int padded_vocab = model.get_padded_vocab_size();
     int max_seq_len = model.get_max_seq_len();
 
     // Allocate persistent buffers sized for max_batch_size
     d_input_ids = inference_arena.allocate<int>(max_batch_size * max_seq_len);
-    d_logits = inference_arena.allocate<float>(max_batch_size * max_seq_len * vocab_size);
+    d_logits = inference_arena.allocate<float>(max_batch_size * max_seq_len * padded_vocab);
     d_next_tokens = inference_arena.allocate<int>(max_batch_size);
 
     // Allocate KV cache (persistent — lives for the entire generation session)
@@ -64,11 +65,12 @@ void PipelineEngine::run_prefill(GenerationResult& result, const GenerationConfi
 
     model.forward(d_input_ids, d_logits, batch_size, padded_seq_len, inference_arena, stream, kv_cache_.get());
 
+    int padded_vocab = model.get_padded_vocab_size();
+
     // Argmax on last token's logits for each sequence in the batch
-    // For each sequence b, the last valid logits are at position (seq_len_b - 1)
-    // With padding, all sequences are padded_seq_len, so we use that for uniform argmax
-    float* last_logits = d_logits + (padded_seq_len - 1) * vocab_size;
-    int row_stride = padded_seq_len * vocab_size;
+    // LM head outputs padded_vocab columns per token
+    float* last_logits = d_logits + (padded_seq_len - 1) * padded_vocab;
+    int row_stride = padded_seq_len * padded_vocab;
     kernels::launch_argmax(last_logits, d_next_tokens, batch_size, 1, vocab_size, row_stride, stream);
 
     // Copy all next tokens back
@@ -113,7 +115,8 @@ void PipelineEngine::run_decode(GenerationResult& result, const GenerationConfig
         // Forward with seq_len=1 — attention uses cached K/V
         model.forward(d_input_ids, d_logits, batch_size, /*seq_len=*/1, inference_arena, stream, kv_cache_.get());
 
-        // Argmax on the single token's logits (no stride needed, seq_len=1)
+        // Argmax on the single token's logits (padded vocab width, but search only real vocab)
+        int padded_vocab = model.get_padded_vocab_size();
         kernels::launch_argmax(d_logits, d_next_tokens, batch_size, 1, vocab_size, /*row_stride=*/0, stream);
 
         std::vector<int> next_tokens(batch_size);

@@ -1,5 +1,6 @@
 #pragma once
 #include <cuda_runtime.h>
+#include <cuda_fp16.h>
 #include <cstddef>
 
 namespace kernels {
@@ -188,6 +189,29 @@ namespace kernels {
         float* k,            // [rows, D]
         float* v,            // [rows, D]
         int rows, int D,
+        cudaStream_t stream = 0
+    );
+
+    // ====================================================================
+    // FP16-Weight Kernels: weights in __half, activations/output in float
+    // ====================================================================
+
+    // FP16-weight GEMV: y = x * W_fp16 (+ bias), optimized for M=1 decode
+    void launch_gemv_fp16w(
+        const float* x,         // [K] — FP32 activations
+        const __half* W,        // [K, N] — FP16 weights
+        float* y,               // [N] — FP32 output
+        int N, int K,
+        const float* bias = nullptr,  // [N] or nullptr — FP32
+        cudaStream_t stream = 0
+    );
+
+    // FP16-weight tiled GEMM: C = A * B_fp16 (auto-dispatches to GEMV for M=1)
+    void launch_gemm_tiled_fp16w(
+        const float* A,         // [M, K] — FP32 activations
+        const __half* B,        // [K, N] — FP16 weights
+        float* C,               // [M, N] — FP32 output
+        int M, int N, int K,
         cudaStream_t stream = 0
     );
 }
