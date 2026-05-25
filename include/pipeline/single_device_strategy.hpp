@@ -10,9 +10,12 @@
 
 namespace pipeline {
 
-class PipelineEngine : public ExecutionStrategy {
+// SingleDeviceStrategy: Execution strategy for models that fit entirely
+// in a single GPU's memory. All layers, weights, KV cache, and scratch
+// buffers reside on one device — no cross-device communication needed.
+class SingleDeviceStrategy : public ExecutionStrategy {
 public:
-    PipelineEngine(Transformer& model, GPT2Tokenizer& tokenizer, GPUMemoryArena& inference_arena, 
+    SingleDeviceStrategy(Transformer& model, GPT2Tokenizer& tokenizer, GPUMemoryArena& inference_arena, 
                    int max_batch_size = 1, cudaStream_t stream = 0);
 
 protected:

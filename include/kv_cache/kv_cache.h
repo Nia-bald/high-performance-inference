@@ -56,7 +56,7 @@ public:
 };
 
 // Factory for creating KV cache instances.
-// PipelineEngine uses this — it's the only place that knows about concrete strategies.
+// SingleDeviceStrategy uses this — it's the only place that knows about concrete strategies.
 class KVCacheFactory {
 public:
     static std::unique_ptr<IKVCache> create_contiguous(

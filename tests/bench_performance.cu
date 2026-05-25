@@ -12,7 +12,7 @@
 #include "tokenizer.h"
 #include "memory.h"
 #include "kernels.cuh"
-#include "pipeline/pipeline_engine.hpp"
+#include "pipeline/single_device_strategy.hpp"
 #include "batch_executor_orchestrator.hpp"
 #include "benchmark_config.hpp"
 namespace fs = std::filesystem;

@@ -7,7 +7,7 @@ The KV cache is a **standalone module** under `include/kv_cache/` and `src/kv_ca
 ```mermaid
 graph TB
     subgraph "Pipeline Layer (Orchestration)"
-        PE["PipelineEngine"]
+        PE["SingleDeviceStrategy"]
     end
 
     subgraph "KV Cache Module (Standalone)"
@@ -105,7 +105,7 @@ classDiagram
         -forward_decode(d_input, d_output, ..., kv_cache)
     }
 
-    class PipelineEngine {
+    class SingleDeviceStrategy {
         -kv_cache_: unique_ptr~IKVCache~
         +run_prefill(result, config)
         +run_decode(result, config)
@@ -114,8 +114,8 @@ classDiagram
     IKVCache <|.. ContiguousKVCache
     KVCacheFactory ..> IKVCache : creates
     SelfAttention ..> IKVCache : reads/writes
-    PipelineEngine o-- IKVCache : owns
-    PipelineEngine ..> KVCacheFactory : uses
+    SingleDeviceStrategy o-- IKVCache : owns
+    SingleDeviceStrategy ..> KVCacheFactory : uses
 ```
 
 ---
@@ -192,7 +192,7 @@ include/
 │   ├── attention.h             ← gains layer_index_, decode/prefill split
 │   └── transformer.h           ← threads IKVCache* through
 └── pipeline/
-    └── pipeline_engine.hpp     ← owns unique_ptr<IKVCache>, uses factory
+    └── single_device_strategy.hpp  ← owns unique_ptr<IKVCache>, uses factory
 
 src/
 ├── kv_cache/
@@ -200,7 +200,7 @@ src/
 ├── layers/
 │   ├── attention.cpp           ← prefill/decode branch logic
 └── pipeline/
-    └── pipeline_engine.cpp     ← creates cache via factory, passes down
+    └── single_device_strategy.cpp  ← creates cache via factory, passes down
 ```
 
 ---
@@ -284,7 +284,7 @@ The KV cache block is allocated **once** and survives the `reset_to(persistent_o
 
 ```mermaid
 sequenceDiagram
-    participant PE as PipelineEngine
+    participant PE as SingleDeviceStrategy
     participant T as Transformer
     participant TB as TransformerBlock
     participant SA as SelfAttention

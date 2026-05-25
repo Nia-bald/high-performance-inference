@@ -1,7 +1,7 @@
 #pragma once
 
 #include "pipeline/execution_strategy.hpp"
-#include "pipeline/pipeline_engine.hpp"
+#include "pipeline/single_device_strategy.hpp"
 #include "memory.h"
 #include <vector>
 #include <memory>

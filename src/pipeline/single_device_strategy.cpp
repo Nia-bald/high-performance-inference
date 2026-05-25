@@ -1,11 +1,11 @@
-#include "pipeline/pipeline_engine.hpp"
+#include "pipeline/single_device_strategy.hpp"
 #include "kv_cache/contiguous_kv_cache.h"
 #include <iostream>
 #include <algorithm>
 
 namespace pipeline {
 
-PipelineEngine::PipelineEngine(Transformer& model, GPT2Tokenizer& tokenizer, GPUMemoryArena& inference_arena, 
+SingleDeviceStrategy::SingleDeviceStrategy(Transformer& model, GPT2Tokenizer& tokenizer, GPUMemoryArena& inference_arena, 
                                int max_batch_size, cudaStream_t stream)
     : model(model), tokenizer(tokenizer), inference_arena(inference_arena), 
       stream(stream), max_batch_size(max_batch_size) {
@@ -28,7 +28,7 @@ PipelineEngine::PipelineEngine(Transformer& model, GPT2Tokenizer& tokenizer, GPU
     persistent_offset = inference_arena.get_used();
 }
 
-int PipelineEngine::pad_and_pack(const std::vector<std::vector<int>>& sequences, std::vector<int>& packed) const {
+int SingleDeviceStrategy::pad_and_pack(const std::vector<std::vector<int>>& sequences, std::vector<int>& packed) const {
     // Find max length across all sequences in the batch
     int max_len = 0;
     for (const auto& seq : sequences) {
@@ -48,7 +48,7 @@ int PipelineEngine::pad_and_pack(const std::vector<std::vector<int>>& sequences,
     return max_len;
 }
 
-void PipelineEngine::run_prefill(GenerationResult& result, const GenerationConfig& config) {
+void SingleDeviceStrategy::run_prefill(GenerationResult& result, const GenerationConfig& config) {
     int vocab_size = model.get_vocab_size();
     int batch_size = config.batch_size;
 
@@ -88,7 +88,7 @@ void PipelineEngine::run_prefill(GenerationResult& result, const GenerationConfi
     kv_cache_->set_pos(padded_seq_len);
 }
 
-void PipelineEngine::run_decode(GenerationResult& result, const GenerationConfig& config) {
+void SingleDeviceStrategy::run_decode(GenerationResult& result, const GenerationConfig& config) {
     int vocab_size = model.get_vocab_size();
     int max_seq_len = model.get_max_seq_len();
     int max_new_tokens = config.max_new_tokens;
@@ -133,7 +133,7 @@ void PipelineEngine::run_decode(GenerationResult& result, const GenerationConfig
     }
 }
 
-void PipelineEngine::finalize(GenerationResult& result) {
+void SingleDeviceStrategy::finalize(GenerationResult& result) {
     result.decoded_texts.resize(result.output_sequences.size());
     for (int b = 0; b < (int)result.output_sequences.size(); ++b) {
         // Find original prompt length — prompt_tokens is total across batch,

@@ -90,8 +90,8 @@ Below is the latest performance comparison between this Custom C++ engine, Huggi
                        │
               ┌────────┴──────────┐
               ▼                   ▼
-     PipelineEngine        (Future: KVCacheEngine,
-     (current impl)         FusedKernelEngine, ...)
+     SingleDeviceStrategy   (Future: MultiDeviceStrategy,
+     (current impl)         FusedKernelStrategy, ...)
 ```
 
 ### Key Design Decisions
@@ -108,7 +108,7 @@ Below is the latest performance comparison between this Custom C++ engine, Huggi
 ├── include/
 │   ├── pipeline/
 │   │   ├── execution_strategy.hpp  # Abstract base — Template Method pattern
-│   │   ├── pipeline_engine.hpp     # Current execution strategy
+│   │   ├── single_device_strategy.hpp  # Current execution strategy
 │   │   └── metrics.hpp             # GenerationMetrics, GenerationResult, GenerationConfig
 │   ├── layers/
 │   │   ├── layer.h                 # Abstract Layer base (Template Method for profiling)
@@ -145,7 +145,7 @@ Below is the latest performance comparison between this Custom C++ engine, Huggi
 │   ├── kv_cache/
 │   │   └── contiguous_kv_cache.cu  #   Contiguous KV cache implementation
 │   ├── pipeline/
-│   │   └── pipeline_engine.cpp     # PipelineEngine strategy implementation
+│   │   └── single_device_strategy.cpp  # SingleDeviceStrategy implementation
 │   ├── transformer.cpp             # Full forward pass orchestration
 │   ├── batch_executor.cpp          # BatchExecutor implementation
 │   ├── batch_executor_orchestrator.cpp

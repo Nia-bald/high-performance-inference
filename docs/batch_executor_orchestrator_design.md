@@ -6,18 +6,18 @@ The core objective of this design is to provide a clean, high-level API for the 
 To achieve this, the system is divided into a three-tiered architecture:
 1. **BatchExecutorOrchestrator:** A global manager that handles all global GPU memory allocations and coordinates concurrent batch spawning.
 2. **BatchExecutor:** An atomic context that manages the memory lifecycle for a single batch and selects/drives the specific execution strategy.
-3. **Execution Strategies (e.g., PipelineEngine):** The specific algorithmic implementations of how a batch is sequenced.
+3. **Execution Strategies (e.g., SingleDeviceStrategy):** The specific algorithmic implementations of how a batch is sequenced.
 
 ## 2. Core Components
 
-### 2.1 Execution Strategies (e.g., PipelineEngine)
-The `PipelineEngine` represents one specific strategy for generating tokens (e.g., standard autoregressive prefill + decode). In the future, other strategies (like Speculative Decoding, Contrastive Search, or Beam Search) can be implemented alongside it. It is purely an algorithmic component that runs on the memory provided to it.
+### 2.1 Execution Strategies (e.g., SingleDeviceStrategy)
+The `SingleDeviceStrategy` represents one specific strategy for generating tokens (e.g., standard autoregressive prefill + decode) where the entire model fits on a single GPU. In the future, other strategies (like Speculative Decoding, Contrastive Search, or Beam Search) can be implemented alongside it. It is purely an algorithmic component that runs on the memory provided to it.
 
 ### 2.2 BatchExecutor (The Context & Lifecycle Manager)
 The `BatchExecutor` is strictly scoped to handle the **atomic processing of a single batch of input sequences**. 
 
 **Responsibilities:**
-* **Strategy Selection:** It chooses and wraps the specific execution strategy (like `PipelineEngine`) to generate the tokens.
+* **Strategy Selection:** It chooses and wraps the specific execution strategy (like `SingleDeviceStrategy`) to generate the tokens.
 * **Isolated Scratch Memory:** It allocates and exclusively owns the `inference_arena` (scratch space, KV cache buffer) required to safely execute its assigned strategy. This guarantees perfect isolation.
 * **GPU Parallel Orchestration:** Synchronizes the CUDA stream for its specific batch execution and strategy.
 
@@ -41,7 +41,7 @@ orchestrator.load_weights("gpt2_weights.bin");
 
 // 2. Submit batches for execution. 
 // The Orchestrator spawns BatchExecutors and scratch arenas.
-// We can dictate the execution strategy (e.g., STANDARD uses a PipelineEngine)
+// We can dictate the execution strategy (e.g., STANDARD uses a SingleDeviceStrategy)
 auto b1_future = orchestrator.submit_batch(prompt1_ids, Strategy::STANDARD);
 auto b2_future = orchestrator.submit_batch(prompt2_ids, Strategy::SPECULATIVE);
 
@@ -56,10 +56,10 @@ Here are the step-by-step code modifications required:
 * Modify `Transformer` down to the fundamental layers to add static memory estimators: `estimate_weight_memory()` and `estimate_inference_scratch(max_batch_size)`.
 
 ### Phase 2: Refine Execution Strategies
-* Keep `PipelineEngine` intact as the fundamental algorithmic worker. Ensure it operates purely as an execution strategy that takes an `inference_arena` and standard config.
+* Keep `SingleDeviceStrategy` intact as the fundamental algorithmic worker. Ensure it operates purely as an execution strategy that takes an `inference_arena` and standard config.
 
 ### Phase 3: Implement BatchExecutor
-* Create `BatchExecutor` to encapsulate the chosen strategy (e.g., `PipelineEngine`), manage the lifecycle of the batch's `inference_arena`, and execute the sequence on its own CUDA stream.
+* Create `BatchExecutor` to encapsulate the chosen strategy (e.g., `SingleDeviceStrategy`), manage the lifecycle of the batch's `inference_arena`, and execute the sequence on its own CUDA stream.
 
 ### Phase 4: Implement BatchExecutorOrchestrator
 * Create `BatchExecutorOrchestrator`.

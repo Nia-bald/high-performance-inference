@@ -47,7 +47,7 @@ set(LAYER_SOURCES
     src/memory.cpp
     src/utils/loader.cpp # Assuming you put the loader helper here
     src/tokenizer.cpp
-    src/pipeline/pipeline_engine.cpp
+    src/pipeline/single_device_strategy.cpp
     src/kv_cache/contiguous_kv_cache.cu
     src/batch_executor.cpp
     src/batch_executor_orchestrator.cpp

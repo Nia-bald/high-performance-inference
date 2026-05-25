@@ -7,7 +7,7 @@
 
 ## Problem
 
-The batch size in `pipeline_engine.cpp` was hardcoded as `1`:
+The batch size in `single_device_strategy.cpp` was hardcoded as `1`:
 
 ```cpp
 model.forward(d_input_ids, d_logits, 1, current_seq_len, inference_arena, stream);
@@ -28,7 +28,7 @@ BenchmarkRunConfig::to_generation_config()
         ↓
 GenerationConfig            (runtime params flowing through the execution pipeline)
         ↓ used by
-PipelineEngine              (reads config.batch_size for model.forward)
+SingleDeviceStrategy        (reads config.batch_size for model.forward)
 ```
 
 **Why two config structs?** They'll diverge as the project grows:
@@ -127,17 +127,17 @@ result.metrics.prompt_tokens = total_prompt_tokens;
 
 ---
 
-### 4. `include/pipeline/pipeline_engine.hpp`
+### 4. `include/pipeline/single_device_strategy.hpp`
 
 Constructor now takes `max_batch_size` to pre-allocate GPU buffers:
 
 ```cpp
 // BEFORE
-PipelineEngine(Transformer& model, GPT2Tokenizer& tokenizer,
+SingleDeviceStrategy(Transformer& model, GPT2Tokenizer& tokenizer,
                GPUMemoryArena& inference_arena, cudaStream_t stream = 0);
 
 // AFTER
-PipelineEngine(Transformer& model, GPT2Tokenizer& tokenizer,
+SingleDeviceStrategy(Transformer& model, GPT2Tokenizer& tokenizer,
                GPUMemoryArena& inference_arena,
                int max_batch_size = 1, cudaStream_t stream = 0);
 ```
@@ -154,7 +154,7 @@ int pad_and_pack(const std::vector<std::vector<int>>& sequences, std::vector<int
 
 ---
 
-### 5. `src/pipeline/pipeline_engine.cpp` (Full Rewrite)
+### 5. `src/pipeline/single_device_strategy.cpp` (Full Rewrite)
 
 **Constructor** — allocates buffers for `max_batch_size`:
 
@@ -212,14 +212,14 @@ GenerationResult execute(const std::vector<std::vector<int>>& input_sequences, c
 
 ### 7. `src/batch_executor.cpp`
 
-Passes `max_batch_size` through to `PipelineEngine`:
+Passes `max_batch_size` through to `SingleDeviceStrategy`:
 
 ```cpp
 // BEFORE
-strategy = std::make_unique<pipeline::PipelineEngine>(model, tokenizer, *inference_arena, stream);
+strategy = std::make_unique<pipeline::SingleDeviceStrategy>(model, tokenizer, *inference_arena, stream);
 
 // AFTER
-strategy = std::make_unique<pipeline::PipelineEngine>(model, tokenizer, *inference_arena, max_batch_size, stream);
+strategy = std::make_unique<pipeline::SingleDeviceStrategy>(model, tokenizer, *inference_arena, max_batch_size, stream);
 ```
 
 ---
@@ -308,7 +308,7 @@ bench_performance.cu
         │
         └── BatchExecutor(max_batch_size)
               │
-              └── PipelineEngine(max_batch_size)
+              └── SingleDeviceStrategy(max_batch_size)
                     │
                     ├── pad_and_pack()     → flat [B × max_len] tensor
                     ├── cudaMemcpyAsync()  → one copy for whole batch

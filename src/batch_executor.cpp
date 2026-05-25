@@ -8,7 +8,7 @@ BatchExecutor::BatchExecutor(Transformer& model, GPT2Tokenizer& tokenizer, Strat
     inference_arena = std::make_unique<GPUMemoryArena>(scratch_size);
     
     if (strategy_type == StrategyType::STANDARD) {
-        strategy = std::make_unique<pipeline::PipelineEngine>(model, tokenizer, *inference_arena, max_batch_size, stream);
+        strategy = std::make_unique<pipeline::SingleDeviceStrategy>(model, tokenizer, *inference_arena, max_batch_size, stream);
     } else {
         throw std::invalid_argument("Unsupported strategy type");
     }

@@ -5,7 +5,7 @@
 #include <vector>
 #include <algorithm>
 #include <cuda_runtime.h>
-#include "pipeline/pipeline_engine.hpp"
+#include "pipeline/single_device_strategy.hpp"
 #include "batch_executor_orchestrator.hpp"
 
 int main() {
