@@ -191,11 +191,28 @@ cd transformer_inference_engine
 # 2. Export GPT-2 weights (requires Python + transformers)
 python tools/gpt2_exporter.py
 
-# 3. Build
-mkdir -p build && cd build
-cmake -DCMAKE_CUDA_ARCHITECTURES=61 ..
-make -j$(nproc)
+# 3. Build (defaults to sm_80, sm_89, sm_90; override if targeting older GPUs like GTX 1050 Ti)
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+# Or for GTX 1050 Ti (Pascal sm_61):
+# cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=61
+cmake --build build -j$(nproc)
+
+# 4. Install (optional, for downstream consumption)
+cmake --install build --prefix ./dist
 ```
+
+### Downstream Integration (find_package / FetchContent)
+
+Downstream projects can consume `TransformerEngine` via modern CMake:
+
+```cmake
+find_package(TransformerEngine REQUIRED)
+
+add_executable(my_model main.cpp)
+target_link_libraries(my_model PRIVATE TransformerEngine::inference_lib)
+```
+
+See [`examples/downstream_sample`](examples/downstream_sample) for a minimal working example.
 
 ### Run
 

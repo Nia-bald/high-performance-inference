@@ -43,7 +43,8 @@ struct PromptConfig {
 // Timing utilities
 // ============================================================================
 
-static double benchmarkKernel(cudaStream_t stream, auto &&kernel_fn) {
+template <typename Func>
+static double benchmarkKernel(cudaStream_t stream, Func &&kernel_fn) {
     cudaEvent_t start, stop;
     CUDA_CHECK(cudaEventCreate(&start));
     CUDA_CHECK(cudaEventCreate(&stop));

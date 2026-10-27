@@ -6,3 +6,5 @@
 /gpt2-ct2
 gpt2_weights.bin
 /.cache
+/dist
+/build*
