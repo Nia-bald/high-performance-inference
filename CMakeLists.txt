@@ -1,11 +1,12 @@
 cmake_minimum_required(VERSION 3.18)
 
 # --- GPU Architecture Configuration ---
-# Support modern HPC targets: 80 (A100), 89 (L40S / RTX 4090), and 90 (H100) by default.
-# Can be overridden via -DCMAKE_CUDA_ARCHITECTURES="<archs>"
+# Default target: NVIDIA GeForce GTX 1050 Ti (Compute Capability 6.1).
+# Can be overridden via -DCMAKE_CUDA_ARCHITECTURES="<archs>" (e.g. "80;89;90" for HPC targets)
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES 80 89 90)
+    set(CMAKE_CUDA_ARCHITECTURES 61)
 endif()
+
 
 project(TransformerEngine VERSION 0.1.0 LANGUAGES CXX CUDA)
 

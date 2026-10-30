@@ -1,4 +1,6 @@
 #include <iostream>
+#include <vector>
+#include <cmath>
 #include <cuda_runtime.h>
 #include "memory.h"
 #include "kernels.cuh"
@@ -15,14 +17,36 @@ int main() {
     }
 
     try {
+        constexpr int N = 64;
         GPUMemoryArena arena(1024 * 1024);
         std::cout << "[Downstream Sample] Successfully created GPUMemoryArena of size: "
                   << arena.get_total() << " bytes." << std::endl;
 
-        float* d_buf = arena.allocate<float>(64);
-        if (d_buf != nullptr) {
-            std::cout << "[Downstream Sample] Successfully allocated 64 floats on device from arena." << std::endl;
+        float* d_buf = arena.allocate<float>(N);
+        if (d_buf == nullptr) {
+            std::cerr << "[Downstream Sample] Failed to allocate device memory from arena." << std::endl;
+            return 1;
         }
+
+        std::vector<float> h_input(N, 2.5f);
+        cudaMemcpy(d_buf, h_input.data(), N * sizeof(float), cudaMemcpyHostToDevice);
+
+        // Execute exported CUDA kernel on device
+        const float scale = 3.0f;
+        kernels::launch_scale(d_buf, scale, N, 0);
+        cudaDeviceSynchronize();
+
+        std::vector<float> h_output(N, 0.0f);
+        cudaMemcpy(h_output.data(), d_buf, N * sizeof(float), cudaMemcpyDeviceToHost);
+
+        for (int i = 0; i < N; ++i) {
+            if (std::abs(h_output[i] - 7.5f) > 1e-4) {
+                std::cerr << "[Downstream Sample] Verification failed at index " << i
+                          << ": expected 7.5, got " << h_output[i] << std::endl;
+                return 1;
+            }
+        }
+        std::cout << "[Downstream Sample] Kernel execution verified on local GPU! (Output = 7.5)" << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "[Downstream Sample] Error: " << e.what() << std::endl;
         return 1;
@@ -31,3 +55,4 @@ int main() {
     std::cout << "[Downstream Sample] PASS: Successfully verified find_package(TransformerEngine REQUIRED)!" << std::endl;
     return 0;
 }
+

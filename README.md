@@ -191,10 +191,10 @@ cd transformer_inference_engine
 # 2. Export GPT-2 weights (requires Python + transformers)
 python tools/gpt2_exporter.py
 
-# 3. Build (defaults to sm_80, sm_89, sm_90; override if targeting older GPUs like GTX 1050 Ti)
+# 3. Build (defaults to GTX 1050 Ti, Pascal sm_61)
 cmake -B build -DCMAKE_BUILD_TYPE=Release
-# Or for GTX 1050 Ti (Pascal sm_61):
-# cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=61
+# Or override for modern HPC GPUs (e.g. A100/H100):
+# cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES="80;89;90"
 cmake --build build -j$(nproc)
 
 # 4. Install (optional, for downstream consumption)
