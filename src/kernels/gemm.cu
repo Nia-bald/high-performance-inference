@@ -119,14 +119,6 @@ __global__ void gemm_register_tiled(
     }
 }
 
-// Lazily-initialized cuBLAS handle
-static cublasHandle_t get_cublas_handle() {
-    static cublasHandle_t handle = nullptr;
-    if (!handle) {
-        cublasCreate(&handle);
-    }
-    return handle;
-}
 
 void launch_gemm_tiled(
     const float* A,  // [M, K]
