@@ -8,11 +8,13 @@
 Transformer::Transformer(int vocab_size, int max_seq_len, int d_model, int num_heads, int num_layers, int d_ff, 
                          GPUMemoryArena& weights_arena)
     : vocab_size(vocab_size), max_seq_len(max_seq_len), d_model(d_model), 
-      num_heads(num_heads), num_layers(num_layers), final_norm(d_model, weights_arena)
+      num_heads(num_heads), num_layers(num_layers),
+      backbone(d_model, num_heads, num_layers, d_ff, weights_arena)
 {
     // Pad vocab for FP16 vectorized LM head GEMV (N must be divisible by 8)
     padded_vocab_size = (vocab_size + 7) & ~7;  // Round up to next multiple of 8
     printf("[Transformer] Vocab padding: %d -> %d (for FP16 half2 vectorization)\n", vocab_size, padded_vocab_size);
+
     // 1. Allocate Weights
     d_token_embedding_table = weights_arena.allocate<float>(vocab_size * d_model);
     printf("[Transformer] Allocated token embeddings: %.2f MB used, %.2f%% full\n", 
@@ -26,16 +28,6 @@ Transformer::Transformer(int vocab_size, int max_seq_len, int d_model, int num_h
     printf("[Transformer] Allocated LM head (FP16): %.2f MB used, %.2f%% full\n", 
            weights_arena.get_used() / (1024.0 * 1024.0), weights_arena.get_usage_percent());
 
-    // 2. Create Blocks
-    for (int i = 0; i < num_layers; ++i) {
-        layers.push_back(new TransformerBlock(d_model, num_heads, d_ff, i, weights_arena));
-        if ((i + 1) % 3 == 0 || i == num_layers - 1) {
-            printf("[Transformer] Created %d/%d blocks: %.2f MB used, %.2f%% full\n", 
-                   i + 1, num_layers, weights_arena.get_used() / (1024.0 * 1024.0), 
-                   weights_arena.get_usage_percent());
-        }
-    }
-
     printf("[Transformer] Initialized: L=%d, H=%d, D=%d, Vocab=%d\n", num_layers, num_heads, d_model, vocab_size);
     printf("[Transformer] Final memory usage: %.2f MB / %.2f MB (%.2f%%)\n", 
            weights_arena.get_used() / (1024.0 * 1024.0), 
@@ -48,56 +40,38 @@ void Transformer::forward(const int* d_token_ids, float* d_logits,
     int current_batch_size, int current_seq_len,
     GPUMemoryArena& inference_arena, cudaStream_t stream, IKVCache* kv_cache) 
 {
-    size_t state_size = current_batch_size * current_seq_len * d_model;
+    size_t state_size = static_cast<size_t>(current_batch_size) * current_seq_len * d_model;
 
-    // 1. Allocate Two Buffers (Ping-Pong)
-    float* d_buffer_1 = inference_arena.allocate<float>(state_size); // Initial State
-    float* d_buffer_2 = inference_arena.allocate<float>(state_size); // Scratchpad
+    // 1. Allocate Buffer for Embeddings
+    float* d_embeddings = inference_arena.allocate<float>(state_size);
 
     int start_pos = (kv_cache != nullptr) ? kv_cache->current_pos() : 0;
 
-    // 2. Embeddings -> Write to Buffer 1
-    // d_buffer_1 now holds the initial embedding state
+    // 2. Embeddings -> Write to d_embeddings
     kernels::launch_embedding_lookup(
-    d_token_ids, d_token_embedding_table, d_pos_embedding_table, 
-    d_buffer_1, current_batch_size, current_seq_len, d_model, stream, start_pos
+        d_token_ids, d_token_embedding_table, d_pos_embedding_table, 
+        d_embeddings, current_batch_size, current_seq_len, d_model, stream, start_pos
     );
 
-    // Pointers that we will swap
-    float* d_in  = d_buffer_1;
-    float* d_out = d_buffer_2;
+    // 3. Backbone forward pass: [B, S, D] -> [B, S, D]
+    backbone.forward(
+        d_embeddings, d_embeddings, current_batch_size, current_seq_len, 
+        inference_arena, stream, kv_cache
+    );
 
-    // 3. Layers Loop (Ping-Pong)
-    for (int i = 0; i < num_layers; ++i) {
-
-    // Run Layer: Read from d_in, Write to d_out — pass kv_cache through
-    layers[i]->forward(d_in, d_out, current_batch_size, current_seq_len, &inference_arena, stream, kv_cache);
-
-    // Optimization: Reset the arena to free specific "intra-layer" scratch memory 
-    // (like Q, K, V projections) that isn't needed for the next layer.
-    // *Note: This requires careful Arena management (stack-based reset).*
-
-    // Swap Pointers
-    // The output of this layer becomes the input of the next
-    std::swap(d_in, d_out);
-    }
-
-    // 4. Final Norm
-    // Note: After the loop, 'd_in' holds the valid result of the last layer
-    // We can write the normalized output to 'd_out' (reusing Buffer 2)
-    final_norm.forward(d_in, d_out, current_batch_size, current_seq_len, nullptr, stream);
-
-    // 5. Head — FP16 weight GEMM with padded vocab (auto-dispatches to FP16 GEMV for M=1 decode)
+    // 4. Head — FP16 weight GEMM with padded vocab (auto-dispatches to FP16 GEMV for M=1 decode)
     kernels::launch_gemm_tiled_fp16w(
-    d_out, d_lm_head, d_logits, 
-    current_batch_size * current_seq_len, padded_vocab_size, d_model, stream
+        d_embeddings, d_lm_head, d_logits, 
+        current_batch_size * current_seq_len, padded_vocab_size, d_model, stream
     );
 }
+
 // --- Helpers ---
 void Transformer::load_embeddings(const float* h_token, const float* h_pos) {
     cudaMemcpy(d_token_embedding_table, h_token, vocab_size * d_model * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_pos_embedding_table,   h_pos,   max_seq_len * d_model * sizeof(float), cudaMemcpyHostToDevice);
 }
+
 void Transformer::load_head(const float* h_head) {
     // Convert FP32 -> FP16, zero-padding extra columns to padded_vocab_size
     size_t padded_count = d_model * padded_vocab_size;
@@ -116,18 +90,14 @@ size_t Transformer::estimate_weight_memory(int vocab_size, int max_seq_len, int 
     total += vocab_size * d_model * sizeof(float);  // d_token_embedding_table (FP32)
     total += max_seq_len * d_model * sizeof(float); // d_pos_embedding_table (FP32)
     total += d_model * ((vocab_size + 7) & ~7) * sizeof(__half);  // d_lm_head (FP16, padded)
-
-    total += num_layers * TransformerBlock::estimate_weight_memory(d_model, num_heads, d_ff);
-    total += LayerNorm::estimate_weight_memory(d_model); // final_norm
+    total += TransformerBackbone::estimate_weight_memory(d_model, num_heads, num_layers, d_ff);
     return total;
 }
 
 size_t Transformer::estimate_inference_scratch(int max_batch_size, int max_seq_len, int d_model, int num_heads, int num_layers, int d_ff) {
-    size_t state_size = max_batch_size * max_seq_len * d_model;
+    size_t state_size = static_cast<size_t>(max_batch_size) * max_seq_len * d_model;
     size_t total = 0;
-    total += 2 * state_size * sizeof(float); // d_buffer_1, d_buffer_2
-    
-    // Accumulate for all layers since we don't reset arena inside Transformer::forward
-    total += num_layers * TransformerBlock::estimate_inference_scratch(max_batch_size, max_seq_len, d_model, num_heads, d_ff);
+    total += state_size * sizeof(float); // d_embeddings
+    total += TransformerBackbone::estimate_inference_scratch(max_batch_size, max_seq_len, d_model, num_heads, num_layers, d_ff);
     return total;
 }
