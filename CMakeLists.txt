@@ -60,6 +60,7 @@ set(LAYER_SOURCES
     src/layers/feed_forward.cpp
     src/layers/layer_norm.cpp
     src/layers/transformer_block.cpp
+    src/layers/transformer_backbone.cpp
     src/memory.cpp
     src/utils/loader.cpp
     src/tokenizer.cpp
@@ -128,6 +129,7 @@ if(TRANSFORMER_ENGINE_BUILD_TESTS)
     add_inference_test(test_attention tests/test_attention.cu)
     add_inference_test(test_feed_forward tests/test_feed_forward.cu)
     add_inference_test(test_transformer tests/test_transformer.cu)
+    add_inference_test(test_transformer_backbone tests/test_transformer_backbone.cu)
 endif()
 
 # --- Benchmarks ---
